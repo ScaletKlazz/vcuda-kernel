@@ -1,6 +1,11 @@
 # vCUDA-kernel
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel?ref=badge_shield&issueType=license)
+![CodeQL](https://github.com/ScaletKlazz/vcuda-kernel/actions/workflows/codeQL.yml/badge.svg)
+![Build](https://github.com/ScaletKlazz/vcuda-kernel/actions/workflows/kernel-build.yml/badge.svg)
+![Issues](https://img.shields.io/github/issues/ScaletKlazz/vcuda-kernel)
+![Release](https://img.shields.io/github/v/release/ScaletKlazz/vcuda-kernel?display_name=tag)
+![License](https://img.shields.io/github/license/ScaletKlazz/vcuda-kernel)
 
 `vCUDA-kernel` is the kernel-side enforcement component of the vCUDA project.
 It is intended to be published as a standalone repository, separate from the
@@ -406,6 +411,8 @@ Recommended public repositories:
 - `vCUDA-core`: user-space CUDA virtualization and remote call transport.
 
 ## License
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel?ref=badge_large&issueType=license)
 
 GPL-2.0. Source files use SPDX license identifiers. UAPI headers use
 `GPL-2.0 WITH Linux-syscall-note`, matching Linux kernel UAPI convention.
