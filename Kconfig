@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0
+
+config VGPU_KERNEL
+	tristate "vGPU kernel enforcement module"
+	depends on KPROBES
+	depends on FUNCTION_TRACER
+	depends on DEBUG_FS
+	help
+	  Build the vGPU kernel enforcement module. The module starts in
+	  trace-only or dry-run mode and requires an explicit runtime gate before
+	  it denies GPU memory allocations or rewrites scheduling fields.
+
+config VGPU_KERNEL_KUNIT_TEST
+	bool "KUnit tests for vGPU kernel enforcement"
+	depends on VGPU_KERNEL
+	depends on KUNIT
+	help
+	  Build KUnit coverage for vGPU core policy and accounting helpers.

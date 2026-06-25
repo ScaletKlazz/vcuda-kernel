@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef VGPU_NV_IOCTL_H
+#define VGPU_NV_IOCTL_H
+
+#include <linux/types.h>
+
+struct vgpu_nv_ioctl_status {
+	bool open_hooked;
+	bool release_hooked;
+	bool ioctl_hooked;
+	u32 hook_errors;
+	u32 nvidia_major;
+	u32 nvidia_uvm_major;
+	bool memory_trace_enabled;
+	u32 memory_alloc_ioctl_cmd;
+	u32 memory_free_ioctl_cmd;
+	u32 memory_ioctl_size_offset;
+	u32 memory_ioctl_nested_ptr_offset;
+	u32 memory_ioctl_nested_size_offset;
+	u64 memory_ioctl_size_filter_value;
+	u64 memory_ioctl_size_max_bytes;
+	u32 memory_ioctl_size_alignment;
+	u32 ioctl_arg_sample_cmd;
+};
+
+int vgpu_nv_ioctl_init(void);
+void vgpu_nv_ioctl_exit(void);
+void vgpu_nv_ioctl_get_status(struct vgpu_nv_ioctl_status *out);
+
+#endif /* VGPU_NV_IOCTL_H */

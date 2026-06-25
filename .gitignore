@@ -1,3 +1,7 @@
+# ide
+.idea
+.vscode
+
 # Prerequisites
 *.d
 
@@ -50,6 +54,13 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build/
+build-*/
 
 # debug information files
 *.dwo
