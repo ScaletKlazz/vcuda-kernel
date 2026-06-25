@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build vgpu-kernel.ko
+    name: Build and validate CMake
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -25,7 +25,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
-          submodules: false
+          submodules: recursive
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -48,35 +49,51 @@ jobs:
 
           test -d "/lib/modules/$(uname -r)/build"
 
-      - name: Show environment
+      - name: Show build environment
         run: |
           set -euo pipefail
+
           uname -a
           gcc --version | head -n 1
           make --version | head -n 1
           cmake --version | head -n 1
           ls -ld "/lib/modules/$(uname -r)/build"
 
-      - name: Build kernel module
+      - name: Build with Kbuild Makefile
         run: |
           set -euo pipefail
+
           make clean
           make -j"$(nproc)"
+
           test -f vgpu-kernel.ko
           modinfo ./vgpu-kernel.ko
 
-      - name: Check CMake wrapper
+      - name: Validate CMake configure and kernel-module target
         run: |
           set -euo pipefail
+
           cmake -S . -B build
-          cmake --build build -- -j"$(nproc)"
+
+          cmake --build build --target kernel-clean
+          cmake --build build --target kernel-module -- -j"$(nproc)"
+
+          test -f vgpu-kernel.ko
+          modinfo ./vgpu-kernel.ko
 
       - name: Prepare artifact
         run: |
           set -euo pipefail
+
           mkdir -p dist
           cp -v vgpu-kernel.ko dist/
-          cp -v Module.symvers modules.order dist/ 2>/dev/null || true
+
+          for f in Module.symvers modules.order; do
+            if [ -f "$f" ]; then
+              cp -v "$f" dist/
+            fi
+          done
+
           modinfo vgpu-kernel.ko > dist/modinfo.txt
 
       - name: Upload artifact
