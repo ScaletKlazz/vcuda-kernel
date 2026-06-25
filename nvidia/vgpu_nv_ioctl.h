@@ -13,6 +13,15 @@ struct vgpu_nv_ioctl_status {
 	u32 nvidia_uvm_major;
 	bool memory_trace_enabled;
 	u32 memory_alloc_ioctl_cmd;
+	u32 memory_ioctl_class_offset;
+	u32 memory_alloc_class;
+	u32 memory_alloc_type;
+	u32 memory_alloc_flags;
+	u32 memory_alloc_attr;
+	u32 memory_alloc_attr2;
+	u32 memory_alloc_tag;
+	u64 memory_alloc_min_bytes;
+	u64 memory_alloc_max_bytes;
 	u32 memory_free_ioctl_cmd;
 	u32 memory_ioctl_size_offset;
 	u32 memory_ioctl_nested_ptr_offset;

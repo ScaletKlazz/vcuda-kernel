@@ -2,6 +2,7 @@
 #include <linux/errno.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/moduleparam.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
@@ -24,6 +25,11 @@ struct vgpu_task_ctx {
 
 static LIST_HEAD(vgpu_tasks);
 static DEFINE_SPINLOCK(vgpu_tasks_lock);
+
+static bool clear_memory_on_last_close = true;
+module_param(clear_memory_on_last_close, bool, 0644);
+MODULE_PARM_DESC(clear_memory_on_last_close,
+		 "clear task memory accounting when the last NVIDIA fd closes");
 
 static struct vgpu_task_ctx *vgpu_task_find_locked(__s32 tgid,
 						   __s32 gpu_minor)
@@ -143,6 +149,8 @@ void vgpu_task_close(__s32 tgid, __s32 gpu_minor)
 	if (ctx->fd_refs > 0)
 		ctx->fd_refs--;
 	ctx->last_seen_jiffies = jiffies;
+	if (ctx->fd_refs == 0 && clear_memory_on_last_close)
+		ctx->memory_used_bytes = 0;
 
 	if (ctx->fd_refs == 0 && ctx->memory_used_bytes == 0) {
 		list_del(&ctx->node);

@@ -7,50 +7,35 @@
 ![Release](https://img.shields.io/github/v/release/ScaletKlazz/vcuda-kernel?display_name=tag)
 ![License](https://img.shields.io/github/license/ScaletKlazz/vcuda-kernel)
 
-`vCUDA-kernel` is the kernel-side enforcement component of the vCUDA project.
-It is intended to be published as a standalone repository, separate from the
-future `device-plugin` and `vcuda-core` repositories.
+`vCUDA-kernel` is the Linux kernel enforcement component of the vCUDA project.
+It provides a kernel-side control and tracing layer for NVIDIA GPU resource
+virtualization experiments, with the long-term goal of enforcing GPU memory and
+compute scheduling policy without relying on `LD_PRELOAD`.
 
-The module currently targets NVIDIA 570.x drivers on Linux and starts in
-trace-only / dry-run mode by default. It does not rely on `LD_PRELOAD` for
-enforcement decisions.
+The repository is intended to be published separately from the user-space
+`vcuda-core` runtime and the Kubernetes `device-plugin` integration.
 
-## Status
+## Features
 
-Implemented:
+- Linux kernel module: `vgpu-kernel.ko`.
+- Control device: `/dev/vgpuctl`.
+- Debugfs diagnostics under `/sys/kernel/debug/vgpu`.
+- NVIDIA driver fingerprint detection at module load.
+- NVIDIA character-device open, ioctl, and release tracing.
+- Per-task GPU context tracking.
+- GPU memory accounting core.
+- Dry-run-first safety model for future enforcement paths.
 
-- `vgpu-kernel.ko` Linux kernel module.
-- `/dev/vgpuctl` control device.
-- read-only debugfs diagnostics under `/sys/kernel/debug/vgpu`.
-- NVIDIA driver fingerprint injection at load time.
-- trace-only NVIDIA character-device open, ioctl, and release probes.
-- active `(tgid, gpu_minor)` task context tracking.
-- GPU memory usage accounting core.
-- optional configurable memory ioctl trace accounting.
-
-In progress:
-
-- NVIDIA 570.x memory allocation/free ioctl identification.
-- GPU memory allocation denial.
-- NVIDIA context/channel/TSG mapping.
-- TSG timeSlice dry-run and enforcement.
-
-Out of scope for this repository:
-
-- Kubernetes device-plugin and CDI integration.
-- cgroupfs policy surface.
-- remote CUDA RPC and user-space CUDA virtualization.
-
-Those pieces are planned as separate repositories.
-
-## Requirements
+## Prerequisites
 
 - Linux host with matching kernel headers installed.
-- NVIDIA 570.x driver.
+- NVIDIA 570.x driver target environment.
 - NVIDIA Open Kernel Modules recommended.
-- GSP firmware enabled for the primary target path.
-- `make`, `gcc`, `cmake` optional.
-- root privileges for module load/unload.
+- GSP firmware enabled for the primary development path.
+- `make` and `gcc`.
+- `cmake` optional.
+- CUDA toolkit optional, only needed for examples.
+- root privileges for module load and unload.
 
 Ubuntu example:
 
@@ -59,48 +44,74 @@ sudo apt update
 sudo apt install build-essential cmake linux-headers-$(uname -r)
 ```
 
-If kernel module build fails with unresolved `module_layout`, check that
+If kernel module build fails with unresolved `module_layout`, check that the
+matching kernel header package is installed and that
 `/lib/modules/$(uname -r)/build/Module.symvers` is not empty.
 
-## Build With Make
-
-Clone with the NVIDIA Open GPU Kernel Modules reference submodule:
+## Quick Start
 
 ```bash
 git submodule update --init --recursive
+make clean
+make
+make load
+make fingerprint
+cat /sys/kernel/debug/vgpu/hooks
+cat /sys/kernel/debug/vgpu/stats
+make unload
 ```
 
-The submodule is checked in at NVIDIA `570.211.01` under
-`third_party/open-gpu-kernel-modules`. It is a reference source tree for RM
-ioctl layouts and class/control definitions; it is not built into this module.
+`make load` defaults to dry-run mode and passes detected NVIDIA driver metadata
+to the module. It also enables conservative local GPU-memory accounting with
+NVIDIA 570 OKM layout defaults. Override with make variables when needed:
+
+```bash
+make load MEMORY_TRACE=0
+make load MEMORY_ALLOC_MIN_BYTES=$((64 * 1024 * 1024))
+```
+
+## Build
+
+Build with Kbuild through the project `Makefile`:
 
 ```bash
 make
 ```
 
-Equivalent explicit Kbuild command:
+Equivalent explicit command:
 
 ```bash
 make -C /lib/modules/$(uname -r)/build M=$PWD modules
 ```
 
-Clean:
+Clean build outputs:
 
 ```bash
 make clean
 ```
 
-## Build With CMake
+Build examples:
 
-CMake is a wrapper around the existing Kbuild `Makefile`. It does not replace
-Kbuild.
+```bash
+make example
+```
+
+Clean examples:
+
+```bash
+make example-clean
+```
+
+### CMake Wrapper
+
+CMake wraps the existing Kbuild flow. It does not replace Kbuild.
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-Useful CMake targets:
+Useful targets:
 
 ```bash
 cmake --build build --target load
@@ -110,34 +121,27 @@ cmake --build build --target fingerprint
 cmake --build build --target debug-hooks
 cmake --build build --target debug-tasks
 cmake --build build --target debug-stats
-cmake --build build --target debug-ioctls
-cmake --build build --target debug-ioctl-args
 cmake --build build --target debug-events
-cmake --build build --target debug-logs
 ```
 
-Module load options can be set at configure time:
+## Load And Unload
 
-```bash
-cmake -S . -B build -DVCUDA_DRY_RUN=1 -DVCUDA_ALLOW_ENFORCE=0
-cmake --build build --target load
-```
-
-## Load
-
-The default load path is safe and non-enforcing:
+Load in default dry-run mode:
 
 ```bash
 make load
 ```
 
-`make load` automatically reads NVIDIA version and device-major data from the
-host and passes them to `insmod`.
-
-Expected log line:
+Useful load variables:
 
 ```text
-vgpu: loading nvidia_driver=570.x.y okm=1 gsp=1 nvidia_major=195 nvidia_uvm_major=511 dry_run=1 allow_enforce=0
+DRY_RUN=1
+ALLOW_ENFORCE=0
+MEMORY_TRACE=1
+MEMORY_ALLOC_MIN_BYTES=16777216
+MEMORY_ALLOC_MAX_BYTES=0
+MEMORY_TRACE_LIMIT_BYTES=0
+CLEAR_MEMORY_ON_LAST_CLOSE=1
 ```
 
 Unload:
@@ -152,6 +156,45 @@ Reload:
 make reload
 ```
 
+The first enforcement-capable path requires all of the following:
+
+- supported NVIDIA driver fingerprint;
+- explicit policy;
+- `dry_run=0`;
+- `allow_enforce=1`.
+
+By default, the module does not deny allocations and does not rewrite NVIDIA
+scheduling state.
+
+## Test
+
+Run a basic module validation:
+
+```bash
+make clean
+make
+make load
+make fingerprint
+nvidia-smi >/dev/null
+cat /sys/kernel/debug/vgpu/stats
+cat /sys/kernel/debug/vgpu/events | tail -n 30
+make unload
+```
+
+Expected high-level result:
+
+- module loads without `Oops`, `BUG`, or hook registration failure;
+- driver fingerprint is visible;
+- NVIDIA ioctl counters increase after `nvidia-smi`;
+- unload completes cleanly.
+
+Build and run CUDA example workload:
+
+```bash
+make example
+./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
+```
+
 ## Debugfs
 
 Mount debugfs if needed:
@@ -160,7 +203,7 @@ Mount debugfs if needed:
 sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
 ```
 
-Available files:
+Common diagnostic files:
 
 ```text
 /sys/kernel/debug/vgpu/enabled
@@ -170,244 +213,39 @@ Available files:
 /sys/kernel/debug/vgpu/tasks
 /sys/kernel/debug/vgpu/events
 /sys/kernel/debug/vgpu/ioctls
-/sys/kernel/debug/vgpu/ioctl_args
-/sys/kernel/debug/vgpu/ioctl_arg_values
-/sys/kernel/debug/vgpu/rm_controls
 /sys/kernel/debug/vgpu/stats
 ```
 
 Quick checks:
 
 ```bash
-make fingerprint
 cat /sys/kernel/debug/vgpu/hooks
 cat /sys/kernel/debug/vgpu/tasks
 cat /sys/kernel/debug/vgpu/ioctls
-cat /sys/kernel/debug/vgpu/ioctl_args
-cat /sys/kernel/debug/vgpu/ioctl_arg_values
-cat /sys/kernel/debug/vgpu/rm_controls
 cat /sys/kernel/debug/vgpu/stats
 cat /sys/kernel/debug/vgpu/events | tail -n 80
 ```
 
-## Basic Validation
+## NVIDIA OKM Reference
 
-Build and load:
+This repository includes NVIDIA Open GPU Kernel Modules as a pinned reference
+submodule under `third_party/open-gpu-kernel-modules`.
 
-```bash
-make clean
-make
-make load
-```
+The submodule is used for ABI/layout lookup and RM ioctl structure references.
+It is not built into `vgpu-kernel.ko`.
 
-Check fingerprint:
+Initialize it with:
 
 ```bash
-make fingerprint
+git submodule update --init --recursive
 ```
-
-Expected for NVIDIA 570.x:
-
-```text
-driver_major=570 ... capabilities=1 ... probe_only=1
-```
-
-Trigger device tracing:
-
-```bash
-nvidia-smi >/dev/null
-cat /sys/kernel/debug/vgpu/stats
-cat /sys/kernel/debug/vgpu/events | tail -n 30
-```
-
-Expected:
-
-- `ioctl_seen` increases.
-- event `type=2` appears for ioctl.
-- event `type=12` appears for NVIDIA open.
-- event `type=13` appears for NVIDIA release.
-- `/sys/kernel/debug/vgpu/ioctls` shows aggregated ioctl `cmd` counts.
-- `hook_errors=0`.
-
-Track active task contexts:
-
-```bash
-nvidia-smi -l 1 >/tmp/nvsmi.log 2>&1 &
-pid=$!
-sleep 2
-cat /sys/kernel/debug/vgpu/tasks
-kill $pid
-sleep 1
-cat /sys/kernel/debug/vgpu/tasks
-```
-
-Expected:
-
-- running process appears with `tgid`, `gpu_minor`, and `fd_refs`;
-- context disappears or decreases after process exit.
-
-Trace memory accounting with a known ioctl command:
-
-```bash
-sudo rmmod vgpu_kernel
-sudo insmod ./vgpu-kernel.ko \
-  dry_run=1 \
-  memory_alloc_ioctl_cmd=0xc030462b \
-  memory_ioctl_nested_ptr_offset=16 \
-  memory_ioctl_nested_size_offset=64 \
-  memory_ioctl_size_filter_value=$((256 * 1024 * 1024)) \
-  memory_ioctl_size_max_bytes=$((1024 * 1024 * 1024)) \
-  memory_ioctl_size_alignment=4096 \
-  memory_trace_limit_bytes=$((1024 * 1024 * 1024))
-make example
-./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
-cat /sys/kernel/debug/vgpu/stats
-cat /sys/kernel/debug/vgpu/tasks
-cat /sys/kernel/debug/vgpu/events | tail -n 80
-```
-
-`memory_alloc_ioctl_cmd` and `memory_free_ioctl_cmd` are disabled by default.
-Use `memory_ioctl_arg_is_size=1` only when `arg` is the byte size directly.
-Use `memory_ioctl_size_offset` when `arg` points to a structure containing a
-u64 byte size field inside the ioctl argument itself.
-Use `memory_ioctl_nested_ptr_offset` and `memory_ioctl_nested_size_offset` when
-the ioctl argument points to a wrapper containing another parameter pointer.
-
-To find candidate NVIDIA 570.x memory commands, compare ioctl snapshots around
-a focused allocation workload:
-
-```bash
-make example
-cat /sys/kernel/debug/vgpu/ioctls >/tmp/vgpu-ioctls.before
-./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
-cat /sys/kernel/debug/vgpu/ioctls >/tmp/vgpu-ioctls.after
-diff -u /tmp/vgpu-ioctls.before /tmp/vgpu-ioctls.after
-```
-
-Then sample one candidate ioctl argument structure. Example:
-
-```bash
-sudo rmmod vgpu_kernel
-sudo insmod ./vgpu-kernel.ko dry_run=1 \
-  ioctl_arg_sample_cmds="0xc030462b" \
-  ioctl_arg_nested_ptr_offset=16 \
-  ioctl_arg_nested_sample_bytes=1024 \
-  ioctl_arg_filter_value=$((256 * 1024 * 1024))
-make example
-./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
-cat /sys/kernel/debug/vgpu/ioctl_args
-grep -E '268435456|536870912' /sys/kernel/debug/vgpu/ioctl_args
-cat /sys/kernel/debug/vgpu/rm_controls | sort -k4,4nr | head -n 80
-```
-
-When `ioctl_arg_filter_value` is set, `ioctl_args` includes exact
-`filter_u32_hits` and `filter_u64_hits` counters. Prefer offsets whose hit count
-tracks the number of expected allocation calls. For `cmd=0xc030462b`,
-`_IOC_SIZE(cmd)` is only `0x30`; offsets beyond that are outside the ioctl
-argument and may be stack residue. Use nested sampling through pointer offsets
-before enabling memory accounting for this path.
-For the current NVIDIA 570 trace, `cmd=0xc030462b`, wrapper pointer offset `16`,
-and nested size offset `64` track the tested allocation count and size.
-
-The NVIDIA Open GPU Kernel Modules reference explains why:
-
-- `NV_ESC_RM_ALLOC` is escape `0x2b`, which matches ioctl `0xc030462b`.
-- The user argument is `NVOS21_PARAMETERS`.
-- `NVOS21_PARAMETERS.pAllocParms` is at offset `16`.
-- For memory classes using `NV_MEMORY_ALLOCATION_PARAMS`, `size` is at offset
-  `64` in the nested allocation parameter buffer.
-
-Reference files:
-
-```text
-third_party/open-gpu-kernel-modules/src/nvidia/arch/nvalloc/unix/include/nv_escape.h
-third_party/open-gpu-kernel-modules/src/common/sdk/nvidia/inc/nvos.h
-third_party/open-gpu-kernel-modules/src/common/sdk/nvidia/inc/class/
-```
-
-To avoid tying accounting to one allocation size, identify the stable RM control
-field first. `rm_controls` is a compact u32 value histogram from the sampled
-nested buffer. Compare it across different allocation sizes and loop counts:
-
-```bash
-sudo rmmod vgpu_kernel 2>/dev/null || true
-sudo insmod ./vgpu-kernel.ko dry_run=1 \
-  ioctl_arg_sample_cmds="0xc030462b" \
-  ioctl_arg_nested_ptr_offset=16 \
-  ioctl_arg_nested_sample_bytes=1024 \
-  ioctl_arg_value_min_count=4
-make example
-./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
-cat /sys/kernel/debug/vgpu/rm_controls >/tmp/vgpu-rm-256.txt
-sudo rmmod vgpu_kernel
-sudo insmod ./vgpu-kernel.ko dry_run=1 \
-  ioctl_arg_sample_cmds="0xc030462b" \
-  ioctl_arg_nested_ptr_offset=16 \
-  ioctl_arg_nested_sample_bytes=1024 \
-  ioctl_arg_value_min_count=4
-./examples/cuda_malloc_smoke $((512 * 1024 * 1024)) 4 0
-cat /sys/kernel/debug/vgpu/rm_controls >/tmp/vgpu-rm-512.txt
-diff -u /tmp/vgpu-rm-256.txt /tmp/vgpu-rm-512.txt | head -n 120
-```
-
-Candidate RM control fields keep the same `(offset, value)` across both runs,
-while size fields change from `268435456` to `536870912`. After the control
-field is confirmed, memory accounting should match on `(cmd, control_offset,
-control_value)` and then read the byte size from `memory_ioctl_nested_size_offset`;
-`memory_ioctl_size_filter_value` should remain diagnostic only.
-
-Unload:
-
-```bash
-make unload
-dmesg | tail -n 30
-```
-
-Expected:
-
-- `vgpu: module unloaded`;
-- no `Oops`, `BUG`, or kernel warning.
-
-## Control Device
-
-`/dev/vgpuctl` is the stable control surface for future policy injection.
-Current policy support is PID/TGID scoped.
-
-The first enforcement-capable path will still require:
-
-- supported fingerprint;
-- explicit policy;
-- `dry_run=0`;
-- `allow_enforce=1`.
-
-By default, the module does not deny memory allocations and does not rewrite
-NVIDIA scheduling state.
-
-## Safety Model
-
-- Default mode is dry-run.
-- `allow_enforce=0` by default.
-- Trace hooks do not modify NVIDIA driver return values.
-- Unsupported fingerprints must not enable enforcement capability.
-- Hook registration failure records `hook_errors` and keeps module load safe.
-- Module unload removes kprobes before releasing registries.
-
-## Roadmap
-
-1. NVIDIA 570.x memory ioctl fingerprinting.
-2. Memory allocation denial after allocation-path fingerprinting.
-3. NVIDIA context/channel/TSG mapping.
-4. TSG timeSlice dry-run.
-5. TSG timeSlice enforcement behind fingerprint gates.
-6. cgroupfs and Kubernetes device-plugin integration in separate repository.
-7. remote CUDA RPC in separate `vcuda-core` repository.
 
 ## Repository Split
 
 Recommended public repositories:
 
-- `vCUDA-kernel`: this repository, kernel-side enforcement.
-- `vCUDA-device-plugin`: Kubernetes device-plugin, CDI, cgroup policy injection.
+- `vCUDA-kernel`: kernel-side enforcement and tracing.
+- `vCUDA-device-plugin`: Kubernetes device-plugin, CDI, and cgroup policy injection.
 - `vCUDA-core`: user-space CUDA virtualization and remote call transport.
 
 ## License
@@ -416,24 +254,3 @@ Recommended public repositories:
 
 GPL-2.0. Source files use SPDX license identifiers. UAPI headers use
 `GPL-2.0 WITH Linux-syscall-note`, matching Linux kernel UAPI convention.
-
-## FOSSA Tips
-
-- Scan this repository with submodules initialized so FOSSA can see the pinned
-  NVIDIA Open GPU Kernel Modules reference tree:
-
-  ```bash
-  git submodule update --init --recursive
-  fossa analyze
-  ```
-
-- Treat `third_party/open-gpu-kernel-modules` as a reference dependency, not as
-  code linked into `vgpu-kernel.ko`. It is pinned for ABI/layout lookup and RM
-  ioctl structure documentation.
-- Keep SPDX headers on every source file. Kernel implementation files should use
-  `GPL-2.0`; UAPI headers should keep `GPL-2.0 WITH Linux-syscall-note`.
-- Do not vendor generated build artifacts into scans. Kernel outputs such as
-  `*.ko`, `*.o`, `*.mod*`, `.tmp_versions/`, `Module.symvers`, and CMake build
-  directories are ignored by `.gitignore`.
-- If FOSSA reports the NVIDIA submodule separately, review it as third-party
-  reference source and keep its upstream license metadata unchanged.

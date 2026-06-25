@@ -26,6 +26,15 @@ static bool trace_nvidia_devices = true;
 static uint memory_alloc_ioctl_cmd;
 static uint memory_free_ioctl_cmd;
 static bool memory_ioctl_arg_is_size;
+static uint memory_ioctl_class_offset = UINT_MAX;
+static uint memory_alloc_class;
+static uint memory_alloc_type = UINT_MAX;
+static uint memory_alloc_flags = UINT_MAX;
+static uint memory_alloc_attr = UINT_MAX;
+static uint memory_alloc_attr2 = UINT_MAX;
+static uint memory_alloc_tag = UINT_MAX;
+static unsigned long memory_alloc_min_bytes;
+static unsigned long memory_alloc_max_bytes;
 static uint memory_ioctl_size_offset = UINT_MAX;
 static uint memory_ioctl_nested_ptr_offset = UINT_MAX;
 static uint memory_ioctl_nested_size_offset = UINT_MAX;
@@ -50,6 +59,24 @@ module_param(memory_free_ioctl_cmd, uint, 0644);
 MODULE_PARM_DESC(memory_free_ioctl_cmd, "ioctl command treated as GPU memory free; 0 disables");
 module_param(memory_ioctl_arg_is_size, bool, 0644);
 MODULE_PARM_DESC(memory_ioctl_arg_is_size, "treat ioctl arg value as memory size; disabled by default");
+module_param(memory_ioctl_class_offset, uint, 0644);
+MODULE_PARM_DESC(memory_ioctl_class_offset, "read RM alloc hClass as u32 from ioctl arg + offset; UINT_MAX disables");
+module_param(memory_alloc_class, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_class, "only account RM allocs with this hClass; 0 disables class filtering");
+module_param(memory_alloc_type, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_type, "only account RM allocs with this NV_MEMORY_ALLOCATION_PARAMS.type; UINT_MAX disables");
+module_param(memory_alloc_flags, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_flags, "only account RM allocs with this NV_MEMORY_ALLOCATION_PARAMS.flags; UINT_MAX disables");
+module_param(memory_alloc_attr, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_attr, "only account RM allocs with this NV_MEMORY_ALLOCATION_PARAMS.attr; UINT_MAX disables");
+module_param(memory_alloc_attr2, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_attr2, "only account RM allocs with this NV_MEMORY_ALLOCATION_PARAMS.attr2; UINT_MAX disables");
+module_param(memory_alloc_tag, uint, 0644);
+MODULE_PARM_DESC(memory_alloc_tag, "only account RM allocs with this NV_MEMORY_ALLOCATION_PARAMS.tag; UINT_MAX disables");
+module_param(memory_alloc_min_bytes, ulong, 0644);
+MODULE_PARM_DESC(memory_alloc_min_bytes, "only account memory allocs at least this size; 0 disables");
+module_param(memory_alloc_max_bytes, ulong, 0644);
+MODULE_PARM_DESC(memory_alloc_max_bytes, "only account memory allocs at most this size; 0 disables");
 module_param(memory_ioctl_size_offset, uint, 0644);
 MODULE_PARM_DESC(memory_ioctl_size_offset, "read memory size as u64 from ioctl arg + offset; UINT_MAX disables");
 module_param(memory_ioctl_nested_ptr_offset, uint, 0644);
@@ -133,6 +160,141 @@ read_size:
 		return false;
 
 	return *bytes != 0;
+}
+
+static bool vgpu_nv_read_nested_ptr(unsigned long arg, unsigned long *nested_ptr)
+{
+	unsigned long ptr_addr;
+
+	if (!nested_ptr || arg == 0 || memory_ioctl_nested_ptr_offset == UINT_MAX)
+		return false;
+	if (arg > ULONG_MAX - memory_ioctl_nested_ptr_offset)
+		return false;
+
+	ptr_addr = arg + memory_ioctl_nested_ptr_offset;
+	if (copy_from_user_nofault(nested_ptr, (const void __user *)ptr_addr,
+				   sizeof(*nested_ptr)))
+		return false;
+
+	return *nested_ptr != 0;
+}
+
+static bool vgpu_nv_read_memory_class(unsigned long arg, __u32 *hclass)
+{
+	unsigned long class_addr;
+
+	if (!hclass || arg == 0 || memory_ioctl_class_offset == UINT_MAX)
+		return false;
+	if (arg > ULONG_MAX - memory_ioctl_class_offset)
+		return false;
+
+	class_addr = arg + memory_ioctl_class_offset;
+	if (copy_from_user_nofault(hclass, (const void __user *)class_addr,
+				   sizeof(*hclass)))
+		return false;
+
+	return true;
+}
+
+static bool vgpu_nv_memory_class_match(__u32 hclass)
+{
+	return memory_alloc_class == 0 || hclass == memory_alloc_class;
+}
+
+static bool vgpu_nv_read_alloc_detail(unsigned long arg, __u32 hclass,
+				      __u64 bytes,
+				      struct vgpu_ioctl_arg_detail_snapshot *detail)
+{
+	unsigned long nested_ptr;
+
+	if (!detail)
+		return false;
+	if (!vgpu_nv_read_nested_ptr(arg, &nested_ptr))
+		return false;
+	if (nested_ptr > ULONG_MAX - 104)
+		return false;
+
+	memset(detail, 0, sizeof(*detail));
+	detail->class_value = hclass;
+	detail->size_value = bytes;
+	if (copy_from_user_nofault(&detail->parent,
+				   (const void __user *)(arg + 4),
+				   sizeof(detail->parent)))
+		return false;
+	if (copy_from_user_nofault(&detail->object,
+				   (const void __user *)(arg + 8),
+				   sizeof(detail->object)))
+		return false;
+	if (copy_from_user_nofault(&detail->owner,
+				   (const void __user *)(nested_ptr + 0),
+				   sizeof(detail->owner)))
+		return false;
+	if (copy_from_user_nofault(&detail->type,
+				   (const void __user *)(nested_ptr + 4),
+				   sizeof(detail->type)))
+		return false;
+	if (copy_from_user_nofault(&detail->flags,
+				   (const void __user *)(nested_ptr + 8),
+				   sizeof(detail->flags)))
+		return false;
+	if (copy_from_user_nofault(&detail->attr,
+				   (const void __user *)(nested_ptr + 24),
+				   sizeof(detail->attr)))
+		return false;
+	if (copy_from_user_nofault(&detail->attr2,
+				   (const void __user *)(nested_ptr + 28),
+				   sizeof(detail->attr2)))
+		return false;
+	if (copy_from_user_nofault(&detail->offset,
+				   (const void __user *)(nested_ptr + 72),
+				   sizeof(detail->offset)))
+		return false;
+	if (copy_from_user_nofault(&detail->limit,
+				   (const void __user *)(nested_ptr + 80),
+				   sizeof(detail->limit)))
+		return false;
+	if (copy_from_user_nofault(&detail->address,
+				   (const void __user *)(nested_ptr + 88),
+				   sizeof(detail->address)))
+		return false;
+	if (copy_from_user_nofault(&detail->tag,
+				   (const void __user *)(nested_ptr + 96),
+				   sizeof(detail->tag)))
+		return false;
+
+	return true;
+}
+
+static bool vgpu_nv_memory_detail_match(const struct vgpu_ioctl_arg_detail_snapshot *detail)
+{
+	if (!detail)
+		return memory_alloc_type == UINT_MAX &&
+		       memory_alloc_flags == UINT_MAX &&
+		       memory_alloc_attr == UINT_MAX &&
+		       memory_alloc_attr2 == UINT_MAX &&
+		       memory_alloc_tag == UINT_MAX;
+	if (memory_alloc_type != UINT_MAX && detail->type != memory_alloc_type)
+		return false;
+	if (memory_alloc_flags != UINT_MAX && detail->flags != memory_alloc_flags)
+		return false;
+	if (memory_alloc_attr != UINT_MAX && detail->attr != memory_alloc_attr)
+		return false;
+	if (memory_alloc_attr2 != UINT_MAX && detail->attr2 != memory_alloc_attr2)
+		return false;
+	if (memory_alloc_tag != UINT_MAX && detail->tag != memory_alloc_tag)
+		return false;
+
+	return true;
+}
+
+static bool vgpu_nv_memory_size_match(__u64 bytes)
+{
+	if (memory_alloc_min_bytes != 0 && bytes < memory_alloc_min_bytes)
+		return false;
+	if (memory_alloc_max_bytes != 0 && bytes > memory_alloc_max_bytes)
+		return false;
+
+	return true;
 }
 
 static size_t vgpu_nv_parse_sample_cmds(__u32 *cmds, size_t max_cmds)
@@ -292,6 +454,10 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 	unsigned int major = 0;
 	int gpu_minor = -1;
 	__u64 bytes;
+	__u32 hclass = 0;
+	bool have_hclass = false;
+	struct vgpu_ioctl_arg_detail_snapshot detail;
+	bool have_detail = false;
 	int ret;
 
 	(void)p;
@@ -331,7 +497,19 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 
 	if (!vgpu_nv_read_memory_size(arg, &bytes))
 		return 0;
-	if (memory_alloc_ioctl_cmd != 0 && cmd == memory_alloc_ioctl_cmd) {
+	have_hclass = vgpu_nv_read_memory_class(arg, &hclass);
+	if (have_hclass) {
+		vgpu_ioctl_arg_record_pair(cmd, hclass, bytes);
+		have_detail = vgpu_nv_read_alloc_detail(arg, hclass, bytes,
+							 &detail);
+		if (have_detail)
+			vgpu_ioctl_arg_record_detail(cmd, &detail);
+	}
+	if (memory_alloc_ioctl_cmd != 0 && cmd == memory_alloc_ioctl_cmd &&
+	    (have_hclass ? vgpu_nv_memory_class_match(hclass) :
+	     memory_alloc_class == 0) &&
+	    vgpu_nv_memory_detail_match(have_detail ? &detail : NULL) &&
+	    vgpu_nv_memory_size_match(bytes)) {
 		ret = vgpu_task_memory_charge(current->pid, task_tgid,
 					      task_gpu_minor, task_major, bytes,
 					      memory_trace_limit_bytes, true,
@@ -466,6 +644,16 @@ void vgpu_nv_ioctl_get_status(struct vgpu_nv_ioctl_status *out)
 		  memory_ioctl_nested_size_offset != UINT_MAX)) &&
 		(memory_alloc_ioctl_cmd != 0 || memory_free_ioctl_cmd != 0);
 	vgpu_nv_ioctl_status.memory_alloc_ioctl_cmd = memory_alloc_ioctl_cmd;
+	vgpu_nv_ioctl_status.memory_ioctl_class_offset =
+		memory_ioctl_class_offset;
+	vgpu_nv_ioctl_status.memory_alloc_class = memory_alloc_class;
+	vgpu_nv_ioctl_status.memory_alloc_type = memory_alloc_type;
+	vgpu_nv_ioctl_status.memory_alloc_flags = memory_alloc_flags;
+	vgpu_nv_ioctl_status.memory_alloc_attr = memory_alloc_attr;
+	vgpu_nv_ioctl_status.memory_alloc_attr2 = memory_alloc_attr2;
+	vgpu_nv_ioctl_status.memory_alloc_tag = memory_alloc_tag;
+	vgpu_nv_ioctl_status.memory_alloc_min_bytes = memory_alloc_min_bytes;
+	vgpu_nv_ioctl_status.memory_alloc_max_bytes = memory_alloc_max_bytes;
 	vgpu_nv_ioctl_status.memory_free_ioctl_cmd = memory_free_ioctl_cmd;
 	vgpu_nv_ioctl_status.memory_ioctl_size_offset = memory_ioctl_size_offset;
 	vgpu_nv_ioctl_status.memory_ioctl_nested_ptr_offset =

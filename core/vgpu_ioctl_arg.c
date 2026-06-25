@@ -18,9 +18,21 @@ struct vgpu_ioctl_arg_value_entry {
 	struct vgpu_ioctl_arg_value_snapshot snapshot;
 };
 
+struct vgpu_ioctl_arg_pair_entry {
+	bool used;
+	struct vgpu_ioctl_arg_pair_snapshot snapshot;
+};
+
+struct vgpu_ioctl_arg_detail_entry {
+	bool used;
+	struct vgpu_ioctl_arg_detail_snapshot snapshot;
+};
+
 static DEFINE_SPINLOCK(vgpu_ioctl_arg_lock);
 static struct vgpu_ioctl_arg_entry vgpu_ioctl_arg_entries[VGPU_IOCTL_ARG_MAX];
 static struct vgpu_ioctl_arg_value_entry vgpu_ioctl_arg_value_entries[VGPU_IOCTL_ARG_VALUE_MAX];
+static struct vgpu_ioctl_arg_pair_entry vgpu_ioctl_arg_pair_entries[VGPU_IOCTL_ARG_PAIR_MAX];
+static struct vgpu_ioctl_arg_detail_entry vgpu_ioctl_arg_detail_entries[VGPU_IOCTL_ARG_DETAIL_MAX];
 
 unsigned long vgpu_ioctl_arg_filter_value;
 module_param_named(ioctl_arg_filter_value, vgpu_ioctl_arg_filter_value,
@@ -40,6 +52,10 @@ void vgpu_ioctl_arg_init(void)
 	memset(vgpu_ioctl_arg_entries, 0, sizeof(vgpu_ioctl_arg_entries));
 	memset(vgpu_ioctl_arg_value_entries, 0,
 	       sizeof(vgpu_ioctl_arg_value_entries));
+	memset(vgpu_ioctl_arg_pair_entries, 0,
+	       sizeof(vgpu_ioctl_arg_pair_entries));
+	memset(vgpu_ioctl_arg_detail_entries, 0,
+	       sizeof(vgpu_ioctl_arg_detail_entries));
 	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);
 }
 
@@ -79,6 +95,102 @@ update:
 void vgpu_ioctl_arg_exit(void)
 {
 	vgpu_ioctl_arg_init();
+}
+
+void vgpu_ioctl_arg_record_pair(__u32 cmd, __u32 class_value,
+				__u64 size_value)
+{
+	struct vgpu_ioctl_arg_pair_entry *free_entry = NULL;
+	struct vgpu_ioctl_arg_pair_entry *entry;
+	unsigned long flags;
+	size_t i;
+
+	spin_lock_irqsave(&vgpu_ioctl_arg_lock, flags);
+	for (i = 0; i < VGPU_IOCTL_ARG_PAIR_MAX; i++) {
+		entry = &vgpu_ioctl_arg_pair_entries[i];
+		if (!entry->used) {
+			if (!free_entry)
+				free_entry = entry;
+			continue;
+		}
+		if (entry->snapshot.cmd == cmd &&
+		    entry->snapshot.class_value == class_value &&
+		    entry->snapshot.size_value == size_value)
+			goto update;
+	}
+
+	entry = free_entry;
+	if (!entry)
+		goto out;
+	entry->used = true;
+	entry->snapshot.cmd = cmd;
+	entry->snapshot.class_value = class_value;
+	entry->snapshot.size_value = size_value;
+	entry->snapshot.count = 0;
+
+update:
+	entry->snapshot.count++;
+out:
+	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);
+}
+
+static bool vgpu_ioctl_arg_detail_same(const struct vgpu_ioctl_arg_detail_snapshot *a,
+					       const struct vgpu_ioctl_arg_detail_snapshot *b)
+{
+	return a->cmd == b->cmd &&
+	       a->parent == b->parent &&
+	       a->object == b->object &&
+	       a->class_value == b->class_value &&
+	       a->owner == b->owner &&
+	       a->type == b->type &&
+	       a->flags == b->flags &&
+	       a->attr == b->attr &&
+	       a->attr2 == b->attr2 &&
+	       a->tag == b->tag &&
+	       a->size_value == b->size_value &&
+	       a->offset == b->offset &&
+	       a->limit == b->limit &&
+	       a->address == b->address;
+}
+
+void vgpu_ioctl_arg_record_detail(__u32 cmd,
+				  const struct vgpu_ioctl_arg_detail_snapshot *detail)
+{
+	struct vgpu_ioctl_arg_detail_entry *free_entry = NULL;
+	struct vgpu_ioctl_arg_detail_entry *entry;
+	struct vgpu_ioctl_arg_detail_snapshot key;
+	unsigned long flags;
+	size_t i;
+
+	if (!detail)
+		return;
+
+	key = *detail;
+	key.cmd = cmd;
+	key.count = 0;
+
+	spin_lock_irqsave(&vgpu_ioctl_arg_lock, flags);
+	for (i = 0; i < VGPU_IOCTL_ARG_DETAIL_MAX; i++) {
+		entry = &vgpu_ioctl_arg_detail_entries[i];
+		if (!entry->used) {
+			if (!free_entry)
+				free_entry = entry;
+			continue;
+		}
+		if (vgpu_ioctl_arg_detail_same(&entry->snapshot, &key))
+			goto update;
+	}
+
+	entry = free_entry;
+	if (!entry)
+		goto out;
+	entry->used = true;
+	entry->snapshot = key;
+
+update:
+	entry->snapshot.count++;
+out:
+	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);
 }
 
 void vgpu_ioctl_arg_record(__u32 cmd, const void *bytes, size_t len)
@@ -235,6 +347,50 @@ size_t vgpu_ioctl_arg_value_snapshot(struct vgpu_ioctl_arg_value_snapshot *out,
 		if (!vgpu_ioctl_arg_value_entries[i].used)
 			continue;
 		out[copied] = vgpu_ioctl_arg_value_entries[i].snapshot;
+		copied++;
+	}
+	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);
+
+	return copied;
+}
+
+size_t vgpu_ioctl_arg_pair_snapshot(struct vgpu_ioctl_arg_pair_snapshot *out,
+				    size_t max_records)
+{
+	unsigned long flags;
+	size_t copied = 0;
+	size_t i;
+
+	if (!out || max_records == 0)
+		return 0;
+
+	spin_lock_irqsave(&vgpu_ioctl_arg_lock, flags);
+	for (i = 0; i < VGPU_IOCTL_ARG_PAIR_MAX && copied < max_records; i++) {
+		if (!vgpu_ioctl_arg_pair_entries[i].used)
+			continue;
+		out[copied] = vgpu_ioctl_arg_pair_entries[i].snapshot;
+		copied++;
+	}
+	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);
+
+	return copied;
+}
+
+size_t vgpu_ioctl_arg_detail_snapshot(struct vgpu_ioctl_arg_detail_snapshot *out,
+				      size_t max_records)
+{
+	unsigned long flags;
+	size_t copied = 0;
+	size_t i;
+
+	if (!out || max_records == 0)
+		return 0;
+
+	spin_lock_irqsave(&vgpu_ioctl_arg_lock, flags);
+	for (i = 0; i < VGPU_IOCTL_ARG_DETAIL_MAX && copied < max_records; i++) {
+		if (!vgpu_ioctl_arg_detail_entries[i].used)
+			continue;
+		out[copied] = vgpu_ioctl_arg_detail_entries[i].snapshot;
 		copied++;
 	}
 	spin_unlock_irqrestore(&vgpu_ioctl_arg_lock, flags);

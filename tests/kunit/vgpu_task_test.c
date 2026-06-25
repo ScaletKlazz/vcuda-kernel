@@ -41,6 +41,19 @@ static bool vgpu_task_test_snapshot(struct kunit *test, __s32 tgid,
 	return find.found;
 }
 
+static bool vgpu_task_test_exists(struct kunit *test, __s32 tgid,
+				  __s32 gpu_minor)
+{
+	struct vgpu_task_test_find find = {
+		.tgid = tgid,
+		.gpu_minor = gpu_minor,
+	};
+
+	KUNIT_EXPECT_EQ(test, vgpu_task_for_each(vgpu_task_test_capture, &find),
+			0);
+	return find.found;
+}
+
 static void vgpu_task_test_init(struct kunit *test)
 {
 	(void)test;
@@ -134,12 +147,26 @@ static void vgpu_task_test_charge_rejects_overflow(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, snapshot.memory_used_bytes, ~(__u64)0);
 }
 
+static void vgpu_task_test_close_clears_memory_on_last_fd(struct kunit *test)
+{
+	KUNIT_EXPECT_EQ(test, vgpu_task_open(100, 100, 0, 195), 0);
+	KUNIT_EXPECT_EQ(test,
+			vgpu_task_memory_charge(100, 100, 0, 195, 512, 0, true,
+						NULL),
+			0);
+
+	vgpu_task_close(100, 0);
+
+	KUNIT_EXPECT_FALSE(test, vgpu_task_test_exists(test, 100, 0));
+}
+
 static struct kunit_case vgpu_task_test_cases[] = {
 	KUNIT_CASE(vgpu_task_test_charge_within_limit),
 	KUNIT_CASE(vgpu_task_test_dry_run_over_limit_charges),
 	KUNIT_CASE(vgpu_task_test_enforce_over_limit_denies),
 	KUNIT_CASE(vgpu_task_test_uncharge_clamps_underflow),
 	KUNIT_CASE(vgpu_task_test_charge_rejects_overflow),
+	KUNIT_CASE(vgpu_task_test_close_clears_memory_on_last_fd),
 	{}
 };
 
