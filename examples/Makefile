@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 
 CUDA_HOME ?= /usr/local/cuda
 NVCC ?= $(CUDA_HOME)/bin/nvcc

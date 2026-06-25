@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef VGPU_NV_570_SYMBOLS_H
 #define VGPU_NV_570_SYMBOLS_H
 

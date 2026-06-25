@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 # Extract NVIDIA 570 OKM RM allocation layout defaults for vCUDA-kernel.
 # Output is shell syntax consumed by Makefile load target.
 

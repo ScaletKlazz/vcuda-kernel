@@ -252,5 +252,5 @@ Recommended public repositories:
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel?ref=badge_large&issueType=license)
 
-GPL-2.0. Source files use SPDX license identifiers. UAPI headers use
-`GPL-2.0 WITH Linux-syscall-note`, matching Linux kernel UAPI convention.
+GPL-2.0-only. Source files use SPDX license identifiers. UAPI headers use
+`GPL-2.0-only WITH Linux-syscall-note`, matching Linux kernel UAPI convention.
