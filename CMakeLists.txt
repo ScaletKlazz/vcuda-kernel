@@ -16,6 +16,7 @@ set(VCUDA_ALLOW_ENFORCE "0" CACHE STRING "Load module with allow_enforce=1 or 0"
 # hardcoded here: make load extracts them from third_party/open-gpu-kernel-modules
 # through scripts/extract_okm_defaults.sh.
 set(VCUDA_MEMORY_TRACE "1" CACHE STRING "Enable conservative RM local-memory accounting during make load")
+set(VCUDA_COMPUTE_TRACE "1" CACHE STRING "Enable RM_CONTROL timeslice dry-run tracing during make load")
 set(VCUDA_MEMORY_ALLOC_MIN_BYTES "16777216" CACHE STRING "Minimum RM local-memory allocation size to account; filters small runtime objects")
 set(VCUDA_MEMORY_ALLOC_MAX_BYTES "0" CACHE STRING "Maximum RM local-memory allocation size to account; 0 disables max gate")
 set(VCUDA_MEMORY_TRACE_LIMIT_BYTES "0" CACHE STRING "Dry-run memory limit for would-deny events; 0 disables limit")
@@ -24,21 +25,32 @@ set(VCUDA_CLEAR_MEMORY_ON_LAST_CLOSE "1" CACHE STRING "Clear task memory account
 # Optional OKM-derived layout overrides. Leave empty to let Makefile extract
 # values from OKM. Set only when testing a driver ABI manually.
 set(VCUDA_MEMORY_ALLOC_IOCTL_CMD "" CACHE STRING "Optional override for NVIDIA RM alloc ioctl command")
+set(VCUDA_MEMORY_FREE_IOCTL_CMD "" CACHE STRING "Optional override for NVIDIA RM free ioctl command")
+set(VCUDA_MEMORY_FREE_OBJECT_OFFSET "" CACHE STRING "Optional override for NVOS00_PARAMETERS hObjectOld offset")
 set(VCUDA_MEMORY_IOCTL_CLASS_OFFSET "" CACHE STRING "Optional override for NVOS21_PARAMETERS hClass offset")
-set(VCUDA_MEMORY_ALLOC_CLASS "" CACHE STRING "Optional override for local GPU-memory RM class")
-set(VCUDA_MEMORY_ALLOC_TYPE "0x00000000" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.type gate")
-set(VCUDA_MEMORY_ALLOC_FLAGS "0x0001c101" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.flags gate observed for CUDA local memory")
-set(VCUDA_MEMORY_ALLOC_ATTR "0x18000000" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.attr gate observed for CUDA local memory")
-set(VCUDA_MEMORY_ALLOC_ATTR2 "0x00000000" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.attr2 gate")
+set(VCUDA_MEMORY_ALLOC_CLASS "0x00000040" CACHE STRING "Primary RM allocation class gate; local GPU memory")
+set(VCUDA_MEMORY_ALLOC_CLASS2 "0x0000003e" CACHE STRING "Secondary RM allocation class gate; system/VMM memory objects")
+set(VCUDA_MEMORY_ALLOC_TYPE "0xffffffff" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.type gate; 0xffffffff disables")
+set(VCUDA_MEMORY_ALLOC_FLAGS "0xffffffff" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.flags gate; 0xffffffff disables")
+set(VCUDA_MEMORY_ALLOC_ATTR "0xffffffff" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.attr gate; 0xffffffff disables")
+set(VCUDA_MEMORY_ALLOC_ATTR2 "0xffffffff" CACHE STRING "NV_MEMORY_ALLOCATION_PARAMS.attr2 gate; 0xffffffff disables")
 set(VCUDA_MEMORY_IOCTL_NESTED_PTR_OFFSET "" CACHE STRING "Optional override for NVOS21_PARAMETERS pAllocParms offset")
 set(VCUDA_MEMORY_IOCTL_NESTED_SIZE_OFFSET "" CACHE STRING "Optional override for NV_MEMORY_ALLOCATION_PARAMS.size offset")
 set(VCUDA_MEMORY_IOCTL_SIZE_MAX_BYTES "0" CACHE STRING "Raw sampled size upper bound; 0 disables")
 set(VCUDA_MEMORY_IOCTL_SIZE_ALIGNMENT "4096" CACHE STRING "Required allocation size alignment for accounting")
+set(VCUDA_RM_CONTROL_IOCTL_CMD "" CACHE STRING "Optional override for NVIDIA RM control ioctl command")
+set(VCUDA_TIMESLICE_CONTROL_CMD "" CACHE STRING "Optional override for NVA06C_CTRL_CMD_SET_TIMESLICE")
+set(VCUDA_TIMESLICE_US_OFFSET "" CACHE STRING "Optional override for NVA06C_CTRL_TIMESLICE_PARAMS.timesliceUs offset")
+set(VCUDA_TIMESLICE_MIN_US "0" CACHE STRING "Minimum rewritten timesliceUs; 0 disables clamp")
+set(VCUDA_TIMESLICE_MAX_US "0" CACHE STRING "Maximum rewritten timesliceUs; 0 disables clamp")
+set(VCUDA_VERIFY_COMPUTE_DRY_RUN "0" CACHE STRING "verify-compute dry-run mode; default 0 checks enforcement")
+set(VCUDA_VERIFY_COMPUTE_ALLOW_ENFORCE "1" CACHE STRING "verify-compute allow_enforce mode; default 1 checks enforcement")
 
 set(VCUDA_LOAD_ARGS
   DRY_RUN=${VCUDA_DRY_RUN}
   ALLOW_ENFORCE=${VCUDA_ALLOW_ENFORCE}
   MEMORY_TRACE=${VCUDA_MEMORY_TRACE}
+  COMPUTE_TRACE=${VCUDA_COMPUTE_TRACE}
   MEMORY_ALLOC_MIN_BYTES=${VCUDA_MEMORY_ALLOC_MIN_BYTES}
   MEMORY_ALLOC_MAX_BYTES=${VCUDA_MEMORY_ALLOC_MAX_BYTES}
   MEMORY_TRACE_LIMIT_BYTES=${VCUDA_MEMORY_TRACE_LIMIT_BYTES}
@@ -49,14 +61,21 @@ set(VCUDA_LOAD_ARGS
   MEMORY_ALLOC_ATTR2=${VCUDA_MEMORY_ALLOC_ATTR2}
   MEMORY_IOCTL_SIZE_MAX_BYTES=${VCUDA_MEMORY_IOCTL_SIZE_MAX_BYTES}
   MEMORY_IOCTL_SIZE_ALIGNMENT=${VCUDA_MEMORY_IOCTL_SIZE_ALIGNMENT}
+  TIMESLICE_MIN_US=${VCUDA_TIMESLICE_MIN_US}
+  TIMESLICE_MAX_US=${VCUDA_TIMESLICE_MAX_US}
 )
 
 foreach(optional_arg
     MEMORY_ALLOC_IOCTL_CMD
+    MEMORY_FREE_IOCTL_CMD
+    MEMORY_FREE_OBJECT_OFFSET
     MEMORY_IOCTL_CLASS_OFFSET
     MEMORY_ALLOC_CLASS
     MEMORY_IOCTL_NESTED_PTR_OFFSET
-    MEMORY_IOCTL_NESTED_SIZE_OFFSET)
+    MEMORY_IOCTL_NESTED_SIZE_OFFSET
+    RM_CONTROL_IOCTL_CMD
+    TIMESLICE_CONTROL_CMD
+    TIMESLICE_US_OFFSET)
   set(cmake_arg "VCUDA_${optional_arg}")
   if(NOT "${${cmake_arg}}" STREQUAL "")
     list(APPEND VCUDA_LOAD_ARGS ${optional_arg}=${${cmake_arg}})
@@ -112,6 +131,25 @@ add_custom_target(fingerprint
   WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Showing NVIDIA driver fingerprint from debugfs"
+)
+
+add_custom_target(verify-compute
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" verify-compute
+          VERIFY_COMPUTE_DRY_RUN=${VCUDA_VERIFY_COMPUTE_DRY_RUN}
+          VERIFY_COMPUTE_ALLOW_ENFORCE=${VCUDA_VERIFY_COMPUTE_ALLOW_ENFORCE}
+          VERIFY_COMPUTE_TIMESLICE_MIN_US=${VCUDA_TIMESLICE_MIN_US}
+          VERIFY_COMPUTE_TIMESLICE_MAX_US=${VCUDA_TIMESLICE_MAX_US}
+  DEPENDS kernel-module
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Verifying compute timeslice tracing and enforcement"
+)
+
+add_custom_target(test-kunit
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" test-kunit
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Running KUnit tests"
 )
 
 if(BASH_EXECUTABLE)

@@ -73,26 +73,32 @@ static int vgpu_debugfs_hooks_show(struct seq_file *seq, void *data)
 	(void)data;
 	vgpu_nv_ioctl_get_status(&status);
 	seq_printf(seq,
-		   "nvidia_device_hooks=%u open_hooked=%u ioctl_hooked=%u release_hooked=%u memory_hooks=%u compute_hooks=0 hook_errors=%u nvidia_major=%u nvidia_uvm_major=%u memory_alloc_ioctl_cmd=0x%08x memory_ioctl_class_offset=%u memory_alloc_class=0x%08x memory_alloc_type=0x%08x memory_alloc_flags=0x%08x memory_alloc_attr=0x%08x memory_alloc_attr2=0x%08x memory_alloc_tag=0x%08x memory_alloc_min_bytes=%llu memory_alloc_max_bytes=%llu memory_free_ioctl_cmd=0x%08x memory_ioctl_size_offset=%u memory_ioctl_nested_ptr_offset=%u memory_ioctl_nested_size_offset=%u memory_ioctl_size_filter_value=%llu memory_ioctl_size_max_bytes=%llu memory_ioctl_size_alignment=%u ioctl_arg_sample_cmd=0x%08x\n",
+		   "nvidia_device_hooks=%u open_hooked=%u ioctl_hooked=%u release_hooked=%u memory_hooks=%u compute_hooks=%u hook_errors=%u nvidia_major=%u nvidia_uvm_major=%u memory_alloc_ioctl_cmd=0x%08x memory_ioctl_class_offset=%u memory_alloc_class=0x%08x memory_alloc_class2=0x%08x memory_alloc_type=0x%08x memory_alloc_flags=0x%08x memory_alloc_attr=0x%08x memory_alloc_attr2=0x%08x memory_alloc_tag=0x%08x memory_alloc_min_bytes=%llu memory_alloc_max_bytes=%llu memory_free_ioctl_cmd=0x%08x memory_free_object_offset=%u memory_ioctl_size_offset=%u memory_ioctl_nested_ptr_offset=%u memory_ioctl_nested_size_offset=%u memory_ioctl_size_filter_value=%llu memory_ioctl_size_max_bytes=%llu memory_ioctl_size_alignment=%u ioctl_arg_sample_cmd=0x%08x rm_control_ioctl_cmd=0x%08x timeslice_control_cmd=0x%08x timeslice_us_offset=%u timeslice_min_us=%llu timeslice_max_us=%llu\n",
 		   status.open_hooked || status.ioctl_hooked ||
 		   status.release_hooked,
 		   status.open_hooked, status.ioctl_hooked,
 		   status.release_hooked, status.memory_trace_enabled,
+		   status.compute_trace_enabled,
 		   status.hook_errors, status.nvidia_major,
 		   status.nvidia_uvm_major, status.memory_alloc_ioctl_cmd,
 		   status.memory_ioctl_class_offset, status.memory_alloc_class,
-		   status.memory_alloc_type, status.memory_alloc_flags,
+		   status.memory_alloc_class2, status.memory_alloc_type,
+		   status.memory_alloc_flags,
 		   status.memory_alloc_attr, status.memory_alloc_attr2,
 		   status.memory_alloc_tag,
 		   (unsigned long long)status.memory_alloc_min_bytes,
 		   (unsigned long long)status.memory_alloc_max_bytes,
-		   status.memory_free_ioctl_cmd, status.memory_ioctl_size_offset,
+		   status.memory_free_ioctl_cmd, status.memory_free_object_offset,
+		   status.memory_ioctl_size_offset,
 		   status.memory_ioctl_nested_ptr_offset,
 		   status.memory_ioctl_nested_size_offset,
 		   (unsigned long long)status.memory_ioctl_size_filter_value,
 		   (unsigned long long)status.memory_ioctl_size_max_bytes,
 		   status.memory_ioctl_size_alignment,
-		   status.ioctl_arg_sample_cmd);
+		   status.ioctl_arg_sample_cmd, status.rm_control_ioctl_cmd,
+		   status.timeslice_control_cmd, status.timeslice_us_offset,
+		   (unsigned long long)status.timeslice_min_us,
+		   (unsigned long long)status.timeslice_max_us);
 	return 0;
 }
 
@@ -163,13 +169,48 @@ static int vgpu_debugfs_events_show(struct seq_file *seq, void *data)
 	count = vgpu_events_snapshot(records, VGPU_EVENT_RING_SIZE);
 	for (i = 0; i < count; i++) {
 		seq_printf(seq,
-			   "seq=%llu ts_ns=%llu type=%u pid=%d tgid=%d gpu_minor=%d old_value=%llu new_value=%llu error=%d flags=%u\n",
+			   "seq=%llu ts_ns=%llu type=%u name=%s pid=%d tgid=%d gpu_minor=%d old_value=%llu new_value=%llu error=%d flags=%u\n",
 			   (unsigned long long)records[i].seq,
 			   (unsigned long long)records[i].ts_ns,
-			   records[i].type, records[i].pid, records[i].tgid,
+			   records[i].type,
+			   vgpu_event_type_name(records[i].type),
+			   records[i].pid, records[i].tgid,
 			   records[i].gpu_minor,
 			   (unsigned long long)records[i].old_value,
 			   (unsigned long long)records[i].new_value,
+			   records[i].error, records[i].flags);
+	}
+
+	kfree(records);
+	return 0;
+}
+
+static int vgpu_debugfs_timeslices_show(struct seq_file *seq, void *data)
+{
+	struct vgpu_timeslice_record *records;
+	size_t count;
+	size_t i;
+
+	(void)data;
+	records = kcalloc(VGPU_TIMESLICE_TRACE_SIZE, sizeof(*records),
+			   GFP_KERNEL);
+	if (!records)
+		return -ENOMEM;
+
+	count = vgpu_timeslice_trace_snapshot(records, VGPU_TIMESLICE_TRACE_SIZE);
+	for (i = 0; i < count; i++) {
+		seq_printf(seq,
+			   "seq=%llu ts_ns=%llu type=%u name=%s pid=%d tgid=%d gpu_minor=%d old_timeslice_us=%llu new_timeslice_us=%llu weight=%u reason=%u reason_name=%s error=%d flags=%u\n",
+			   (unsigned long long)records[i].seq,
+			   (unsigned long long)records[i].ts_ns,
+			   records[i].type,
+			   vgpu_event_type_name(records[i].type),
+			   records[i].pid, records[i].tgid,
+			   records[i].gpu_minor,
+			   (unsigned long long)records[i].old_timeslice_us,
+			   (unsigned long long)records[i].new_timeslice_us,
+			   records[i].weight, records[i].reason,
+			   vgpu_timeslice_reason_name(records[i].reason),
 			   records[i].error, records[i].flags);
 	}
 
@@ -272,9 +313,33 @@ static int vgpu_debugfs_ioctl_arg_values_show(struct seq_file *seq, void *data)
 
 static int vgpu_debugfs_rm_controls_show(struct seq_file *seq, void *data)
 {
-	return vgpu_debugfs_ioctl_arg_values_show(seq, data);
-}
+	struct vgpu_rm_control_trace_snapshot *snapshots;
+	size_t count;
+	size_t i;
 
+	(void)data;
+	snapshots = kcalloc(VGPU_RM_CONTROL_TRACE_MAX, sizeof(*snapshots),
+			    GFP_KERNEL);
+	if (!snapshots)
+		return -ENOMEM;
+
+	count = vgpu_rm_control_trace_snapshot(snapshots,
+					      VGPU_RM_CONTROL_TRACE_MAX);
+	for (i = 0; i < count; i++) {
+		seq_printf(seq,
+			   "ctrl_cmd=0x%08x count=%llu last_hobject=0x%08x last_params_size=%u last_pid=%d last_tgid=%d last_gpu_minor=%d last_nvidia_major=%u\n",
+			   snapshots[i].ctrl_cmd,
+			   (unsigned long long)snapshots[i].count,
+			   snapshots[i].last_hobject,
+			   snapshots[i].last_params_size,
+			   snapshots[i].last_pid, snapshots[i].last_tgid,
+			   snapshots[i].last_gpu_minor,
+			   snapshots[i].last_nvidia_major);
+	}
+
+	kfree(snapshots);
+	return 0;
+}
 static int vgpu_debugfs_alloc_pairs_show(struct seq_file *seq, void *data)
 {
 	struct vgpu_ioctl_arg_pair_snapshot *snapshots;
@@ -381,6 +446,7 @@ VGPU_DEBUGFS_FOPS(vgpu_debugfs_hooks);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_policies);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_tasks);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_events);
+VGPU_DEBUGFS_FOPS(vgpu_debugfs_timeslices);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_ioctls);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_ioctl_args);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_ioctl_arg_values);
@@ -438,6 +504,10 @@ int vgpu_debugfs_init(struct vgpu_policy_table *policies)
 	if (ret)
 		goto err_remove;
 	ret = vgpu_debugfs_create_file("events", &vgpu_debugfs_events_fops);
+	if (ret)
+		goto err_remove;
+	ret = vgpu_debugfs_create_file("timeslices",
+				       &vgpu_debugfs_timeslices_fops);
 	if (ret)
 		goto err_remove;
 	ret = vgpu_debugfs_create_file("ioctls", &vgpu_debugfs_ioctls_fops);

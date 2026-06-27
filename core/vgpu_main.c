@@ -32,7 +32,7 @@ MODULE_PARM_DESC(allow_enforce, "allow write-capable enforcement paths");
 static int __init vgpu_init(void)
 {
 	enum vgpu_runtime_mode initial_mode = dry_run ? VGPU_MODE_DRY_RUN :
-		VGPU_MODE_TRACE_ONLY;
+		(allow_enforce ? VGPU_MODE_ENFORCING : VGPU_MODE_TRACE_ONLY);
 	int ret;
 
 	BUILD_BUG_ON(sizeof(struct vgpu_policy) != 24);
@@ -78,7 +78,7 @@ static int __init vgpu_init(void)
 		return ret;
 	}
 
-	ret = vgpu_nv_ioctl_init();
+	ret = vgpu_nv_ioctl_init(&vgpu_policies, allow_enforce);
 	if (ret) {
 		vgpu_nv_probe_exit();
 		vgpu_ctl_exit();

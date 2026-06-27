@@ -160,6 +160,48 @@ static void vgpu_task_test_close_clears_memory_on_last_fd(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, vgpu_task_test_exists(test, 100, 0));
 }
 
+
+static void vgpu_task_test_object_charge_replaces_and_free_clears(struct kunit *test)
+{
+	struct vgpu_task_snapshot snapshot;
+	__u64 freed = 0;
+
+	KUNIT_EXPECT_EQ(test,
+			vgpu_task_memory_charge_object(100, 100, 0, 195,
+						       0x5c000001, 512, 0,
+						       true, NULL),
+			0);
+	KUNIT_EXPECT_EQ(test,
+			vgpu_task_memory_charge_object(100, 100, 0, 195,
+						       0x5c000001, 1024, 0,
+						       true, NULL),
+			0);
+	KUNIT_ASSERT_TRUE(test, vgpu_task_test_snapshot(test, 100, 0,
+							&snapshot));
+	KUNIT_EXPECT_EQ(test, snapshot.memory_used_bytes, 1024ULL);
+
+	KUNIT_EXPECT_EQ(test,
+			vgpu_task_memory_uncharge_object(100, 0, 0x5c000001,
+							 &freed),
+			0);
+	KUNIT_EXPECT_EQ(test, freed, 1024ULL);
+	KUNIT_ASSERT_TRUE(test, vgpu_task_test_snapshot(test, 100, 0,
+							&snapshot));
+	KUNIT_EXPECT_EQ(test, snapshot.memory_used_bytes, 0ULL);
+}
+
+static void vgpu_task_test_timeslice_update_sets_last_timeslice(struct kunit *test)
+{
+	struct vgpu_task_snapshot snapshot;
+
+	KUNIT_EXPECT_EQ(test,
+			vgpu_task_timeslice_update(100, 100, 0, 195, 2500), 0);
+	KUNIT_ASSERT_TRUE(test, vgpu_task_test_snapshot(test, 100, 0,
+							&snapshot));
+	KUNIT_EXPECT_EQ(test, snapshot.last_timeslice, 2500ULL);
+	KUNIT_EXPECT_EQ(test, snapshot.nvidia_major, 195U);
+}
+
 static struct kunit_case vgpu_task_test_cases[] = {
 	KUNIT_CASE(vgpu_task_test_charge_within_limit),
 	KUNIT_CASE(vgpu_task_test_dry_run_over_limit_charges),
@@ -167,6 +209,8 @@ static struct kunit_case vgpu_task_test_cases[] = {
 	KUNIT_CASE(vgpu_task_test_uncharge_clamps_underflow),
 	KUNIT_CASE(vgpu_task_test_charge_rejects_overflow),
 	KUNIT_CASE(vgpu_task_test_close_clears_memory_on_last_fd),
+	KUNIT_CASE(vgpu_task_test_object_charge_replaces_and_free_clears),
+	KUNIT_CASE(vgpu_task_test_timeslice_update_sets_last_timeslice),
 	{}
 };
 

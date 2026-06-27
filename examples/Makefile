@@ -3,7 +3,7 @@
 CUDA_HOME ?= /usr/local/cuda
 NVCC ?= $(CUDA_HOME)/bin/nvcc
 
-TARGETS := cuda_malloc_smoke
+TARGETS := cuda_malloc_smoke cuda_vmm_smoke vgpu_set_policy
 
 .PHONY: all clean run
 
@@ -11,6 +11,12 @@ all: $(TARGETS)
 
 cuda_malloc_smoke: cuda_malloc_smoke.cu
 	$(NVCC) -O2 -std=c++14 -o $@ $<
+
+cuda_vmm_smoke: cuda_vmm_smoke.cu
+	$(NVCC) -O2 -std=c++14 -o $@ $< -lcuda
+
+vgpu_set_policy: vgpu_set_policy.c ../include/vgpu_ioctl.h ../include/vgpu_types.h
+	$(CC) -O2 -Wall -Wextra -I.. -o $@ $<
 
 run: cuda_malloc_smoke
 	./cuda_malloc_smoke

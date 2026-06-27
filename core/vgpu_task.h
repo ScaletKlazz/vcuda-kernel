@@ -26,7 +26,15 @@ int vgpu_task_memory_charge(__s32 pid, __s32 tgid, __s32 gpu_minor,
 			    __u32 nvidia_major, __u64 bytes,
 			    __u64 limit_bytes, bool dry_run,
 			    bool *would_deny);
+int vgpu_task_memory_charge_object(__s32 pid, __s32 tgid, __s32 gpu_minor,
+				   __u32 nvidia_major, __u32 object,
+				   __u64 bytes, __u64 limit_bytes,
+				   bool dry_run, bool *would_deny);
 int vgpu_task_memory_uncharge(__s32 tgid, __s32 gpu_minor, __u64 bytes);
+int vgpu_task_memory_uncharge_object(__s32 tgid, __s32 gpu_minor,
+				     __u32 object, __u64 *bytes_out);
+int vgpu_task_timeslice_update(__s32 pid, __s32 tgid, __s32 gpu_minor,
+			       __u32 nvidia_major, __u64 timeslice);
 int vgpu_task_for_each(int (*fn)(const struct vgpu_task_snapshot *task,
 				 void *data),
 		       void *data);

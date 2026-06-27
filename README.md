@@ -3,39 +3,32 @@
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel?ref=badge_shield&issueType=license)
 ![CodeQL](https://github.com/ScaletKlazz/vcuda-kernel/actions/workflows/codeQL.yml/badge.svg)
 ![Build](https://github.com/ScaletKlazz/vcuda-kernel/actions/workflows/kernel-build.yml/badge.svg)
+[![Coverage](https://codecov.io/gh/ScaletKlazz/vcuda-kernel/graph/badge.svg)](https://codecov.io/gh/ScaletKlazz/vcuda-kernel)
 ![Issues](https://img.shields.io/github/issues/ScaletKlazz/vcuda-kernel)
 ![Release](https://img.shields.io/github/v/release/ScaletKlazz/vcuda-kernel?display_name=tag)
 ![License](https://img.shields.io/github/license/ScaletKlazz/vcuda-kernel)
 
-`vCUDA-kernel` is the Linux kernel enforcement component of the vCUDA project.
-It provides a kernel-side control and tracing layer for NVIDIA GPU resource
-virtualization experiments, with the long-term goal of enforcing GPU memory and
-compute scheduling policy without relying on `LD_PRELOAD`.
+Linux kernel enforcement module for vCUDA GPU virtualization.
 
-The repository is intended to be published separately from the user-space
-`vcuda-core` runtime and the Kubernetes `device-plugin` integration.
+`vCUDA-kernel` provides kernel-side NVIDIA GPU resource tracing, policy control,
+memory accounting, and compute timeslice enforcement. It is designed to work as
+the kernel component of the vCUDA stack together with `vCUDA-core` and the
+Kubernetes device-plugin integration.
 
-## Features
+# HomePage
 
-- Linux kernel module: `vgpu-kernel.ko`.
-- Control device: `/dev/vgpuctl`.
-- Debugfs diagnostics under `/sys/kernel/debug/vgpu`.
-- NVIDIA driver fingerprint detection at module load.
-- NVIDIA character-device open, ioctl, and release tracing.
-- Per-task GPU context tracking.
-- GPU memory accounting core.
-- Dry-run-first safety model for future enforcement paths.
+[CFN-Cloud](https://www.cfncloud.com)(In development...)
 
-## Prerequisites
+# Build Dependencies
 
-- Linux host with matching kernel headers installed.
-- NVIDIA 570.x driver target environment.
-- NVIDIA Open Kernel Modules recommended.
-- GSP firmware enabled for the primary development path.
-- `make` and `gcc`.
-- `cmake` optional.
-- CUDA toolkit optional, only needed for examples.
-- root privileges for module load and unload.
+- Linux host with matching kernel headers
+- [NVIDIA Open GPU Kernel Modules](https://github.com/NVIDIA/open-gpu-kernel-modules) reference submodule
+- NVIDIA 570/580 driver target environment
+- GSP firmware enabled for the primary development path
+- [CMake](https://cmake.org) >= 3.16
+- `make` and `gcc`
+- CUDA toolkit, only for example workloads
+- root privileges for module load and unload
 
 Ubuntu example:
 
@@ -44,92 +37,47 @@ sudo apt update
 sudo apt install build-essential cmake linux-headers-$(uname -r)
 ```
 
-If kernel module build fails with unresolved `module_layout`, check that the
-matching kernel header package is installed and that
-`/lib/modules/$(uname -r)/build/Module.symvers` is not empty.
+# How to Use
 
-## Quick Start
+## build
+
+1. initialize submodules
 
 ```bash
 git submodule update --init --recursive
-make clean
-make
-make load
-make fingerprint
-cat /sys/kernel/debug/vgpu/hooks
-cat /sys/kernel/debug/vgpu/stats
-make unload
 ```
 
-`make load` defaults to dry-run mode and passes detected NVIDIA driver metadata
-to the module. It also enables conservative local GPU-memory accounting with
-NVIDIA 570 OKM layout defaults. Override with make variables when needed:
-
-```bash
-make load MEMORY_TRACE=0
-make load MEMORY_ALLOC_MIN_BYTES=$((64 * 1024 * 1024))
-```
-
-## Build
-
-Build with Kbuild through the project `Makefile`:
-
-```bash
-make
-```
-
-Equivalent explicit command:
-
-```bash
-make -C /lib/modules/$(uname -r)/build M=$PWD modules
-```
-
-Clean build outputs:
+2. build kernel module
 
 ```bash
 make clean
+make
 ```
 
-Build examples:
+3. build example workloads
 
 ```bash
 make example
 ```
 
-Clean examples:
-
-```bash
-make example-clean
-```
-
-### CMake Wrapper
-
-CMake wraps the existing Kbuild flow. It does not replace Kbuild.
+4. build with CMake wrapper
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-Useful targets:
+## configure
 
 ```bash
-cmake --build build --target load
-cmake --build build --target unload
-cmake --build build --target reload
-cmake --build build --target fingerprint
-cmake --build build --target debug-hooks
-cmake --build build --target debug-tasks
-cmake --build build --target debug-stats
-cmake --build build --target debug-events
-```
-
-## Load And Unload
-
-Load in default dry-run mode:
-
-```bash
+# default dry-run load
 make load
+
+# enforcing compute timeslice rewrite
+make reload DRY_RUN=0 ALLOW_ENFORCE=1 CLEAR_MEMORY_ON_LAST_CLOSE=0
+
+# optional rewritten timeslice safety clamps
+make reload DRY_RUN=0 ALLOW_ENFORCE=1 TIMESLICE_MIN_US=1000 TIMESLICE_MAX_US=10000
 ```
 
 Useful load variables:
@@ -138,72 +86,37 @@ Useful load variables:
 DRY_RUN=1
 ALLOW_ENFORCE=0
 MEMORY_TRACE=1
+COMPUTE_TRACE=1
 MEMORY_ALLOC_MIN_BYTES=16777216
 MEMORY_ALLOC_MAX_BYTES=0
 MEMORY_TRACE_LIMIT_BYTES=0
 CLEAR_MEMORY_ON_LAST_CLOSE=1
+TIMESLICE_MIN_US=0
+TIMESLICE_MAX_US=0
 ```
 
-Unload:
+## usage
 
 ```bash
-make unload
-```
-
-Reload:
-
-```bash
-make reload
-```
-
-The first enforcement-capable path requires all of the following:
-
-- supported NVIDIA driver fingerprint;
-- explicit policy;
-- `dry_run=0`;
-- `allow_enforce=1`.
-
-By default, the module does not deny allocations and does not rewrite NVIDIA
-scheduling state.
-
-## Test
-
-Run a basic module validation:
-
-```bash
-make clean
-make
-make load
+# inspect module state
 make fingerprint
-nvidia-smi >/dev/null
+cat /sys/kernel/debug/vgpu/hooks
 cat /sys/kernel/debug/vgpu/stats
-cat /sys/kernel/debug/vgpu/events | tail -n 30
+
+# run CUDA allocation smoke test
+./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
+
+# run CUDA VMM smoke test
+./examples/cuda_vmm_smoke $((256 * 1024 * 1024)) 4 0
+
+# verify compute timeslice enforcement path
+make verify-compute
+
+# unload module
 make unload
 ```
 
-Expected high-level result:
-
-- module loads without `Oops`, `BUG`, or hook registration failure;
-- driver fingerprint is visible;
-- NVIDIA ioctl counters increase after `nvidia-smi`;
-- unload completes cleanly.
-
-Build and run CUDA example workload:
-
-```bash
-make example
-./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
-```
-
-## Debugfs
-
-Mount debugfs if needed:
-
-```bash
-sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
-```
-
-Common diagnostic files:
+Debugfs files:
 
 ```text
 /sys/kernel/debug/vgpu/enabled
@@ -212,21 +125,95 @@ Common diagnostic files:
 /sys/kernel/debug/vgpu/policies
 /sys/kernel/debug/vgpu/tasks
 /sys/kernel/debug/vgpu/events
+/sys/kernel/debug/vgpu/timeslices
 /sys/kernel/debug/vgpu/ioctls
 /sys/kernel/debug/vgpu/stats
 ```
 
-Quick checks:
+# Test
+
+## module validation
 
 ```bash
-cat /sys/kernel/debug/vgpu/hooks
-cat /sys/kernel/debug/vgpu/tasks
-cat /sys/kernel/debug/vgpu/ioctls
+make clean
+make
+make load
+make fingerprint
+nvidia-smi >/dev/null
 cat /sys/kernel/debug/vgpu/stats
-cat /sys/kernel/debug/vgpu/events | tail -n 80
+make unload
 ```
 
-## NVIDIA OKM Reference
+## example validation
+
+```bash
+make example
+./examples/cuda_malloc_smoke $((256 * 1024 * 1024)) 4 0
+./examples/cuda_vmm_smoke $((256 * 1024 * 1024)) 4 0
+```
+
+## compute enforcement validation
+
+```bash
+make verify-compute
+make verify-compute VERIFY_COMPUTE_TIMESLICE_MIN_US=1000 VERIFY_COMPUTE_WEIGHT=1
+make verify-compute VERIFY_COMPUTE_DRY_RUN=1 VERIFY_COMPUTE_ALLOW_ENFORCE=0
+```
+
+## KUnit
+
+```bash
+make test-kunit
+```
+
+# Features
+
+## GPU Virtualization Features
+
+### Base Features
+
+- ✅ Linux kernel module: `vgpu-kernel.ko`
+- ✅ NVIDIA driver fingerprint detection
+- ✅ NVIDIA character-device open/ioctl/release tracing
+- ✅ Debugfs diagnostics under `/sys/kernel/debug/vgpu`
+- ✅ Control device: `/dev/vgpuctl`
+- ✅ Per-task GPU context tracking
+- ✅ Conservative GPU memory accounting
+- ✅ CUDA VMM allocate/free object accounting
+- ✅ RM_CONTROL tracing
+- ✅ TSG timeslice dry-run tracing
+- ✅ TSG timeslice rewrite enforcement
+- ✅ KUnit test entrypoint
+- ☐ Coverage report publishing
+- ☐ cgroupfs policy control
+- ☐ Kubernetes device-plugin integration
+- ...
+
+### More Features
+
+- ☐ Remote GPU call over network
+- ☐ GPU memory oversubscription control
+- ☐ Multi-GPU policy scheduling
+- ☐ GPU task hot snapshot
+- ...
+
+# Why This Project?
+
+This project is built as the kernel enforcement layer for open GPU
+virtualization experiments.
+
+- Kernel Enforcement: move GPU resource control below user-space `LD_PRELOAD` boundaries.
+- Open Architecture: keep driver ABI research, tracing, and enforcement logic auditable.
+- Kubernetes Ready: provide a kernel foundation for device-plugin and cgroup policy injection.
+- Dynamic Controllability: allow runtime task policy updates through `/dev/vgpuctl`.
+- Dry-run First: validate policy decisions through debugfs before enabling write-capable paths.
+
+`vCUDA-kernel` is intended to be published separately from:
+
+- `vCUDA-core`: user-space CUDA virtualization and remote call transport.
+- `vCUDA-device-plugin`: Kubernetes device-plugin, CDI, and cgroup policy injection.
+
+# NVIDIA OKM Reference
 
 This repository includes NVIDIA Open GPU Kernel Modules as a pinned reference
 submodule under `third_party/open-gpu-kernel-modules`.
@@ -234,21 +221,11 @@ submodule under `third_party/open-gpu-kernel-modules`.
 The submodule is used for ABI/layout lookup and RM ioctl structure references.
 It is not built into `vgpu-kernel.ko`.
 
-Initialize it with:
+# Contributing
 
-```bash
-git submodule update --init --recursive
-```
+[Code of conduct](/CODE_OF_CONDUCT.md)
 
-## Repository Split
-
-Recommended public repositories:
-
-- `vCUDA-kernel`: kernel-side enforcement and tracing.
-- `vCUDA-device-plugin`: Kubernetes device-plugin, CDI, and cgroup policy injection.
-- `vCUDA-core`: user-space CUDA virtualization and remote call transport.
-
-## License
+# License
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2FScaletKlazz%2Fvcuda-kernel?ref=badge_large&issueType=license)
 
