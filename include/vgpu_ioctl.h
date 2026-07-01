@@ -13,5 +13,9 @@
 #define VGPU_IOCTL_GET_STATS   _IOR(VGPU_IOCTL_MAGIC, 3, struct vgpu_stats)
 #define VGPU_IOCTL_SET_DRY_RUN _IOW(VGPU_IOCTL_MAGIC, 4, int)
 #define VGPU_IOCTL_DISABLE     _IO(VGPU_IOCTL_MAGIC, 5)
+#define VGPU_IOCTL_SET_CGROUP_POLICY \
+	_IOW(VGPU_IOCTL_MAGIC, 6, struct vgpu_cgroup_policy)
+#define VGPU_IOCTL_GET_CGROUP_POLICY \
+	_IOWR(VGPU_IOCTL_MAGIC, 7, struct vgpu_cgroup_policy_query)
 
 #endif /* VGPU_IOCTL_H */

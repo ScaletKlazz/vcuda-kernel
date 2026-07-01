@@ -8,6 +8,7 @@
 #include <linux/string.h>
 
 #include "vgpu_task.h"
+#include "vgpu_cgroup.h"
 
 #define VGPU_TASK_SNAPSHOT_MAX 1024
 #define VGPU_TASK_MEMORY_OBJECT_MAX 4096
@@ -26,6 +27,7 @@ struct vgpu_task_ctx {
 	__s32 tgid;
 	__s32 gpu_minor;
 	__u32 nvidia_major;
+	__u64 cgroup_id;
 	__u32 fd_refs;
 	__u64 memory_used_bytes;
 	__u64 last_timeslice;
@@ -73,6 +75,7 @@ static struct vgpu_task_ctx *vgpu_task_get_or_create_locked(__s32 pid,
 	ctx->tgid = tgid;
 	ctx->gpu_minor = gpu_minor;
 	ctx->nvidia_major = nvidia_major;
+	ctx->cgroup_id = vgpu_cgroup_current_id();
 	ctx->last_seen_jiffies = jiffies;
 	list_add_tail(&ctx->node, &vgpu_tasks);
 	return ctx;
@@ -157,6 +160,7 @@ int vgpu_task_open(__s32 pid, __s32 tgid, __s32 gpu_minor,
 
 	ctx->pid = pid;
 	ctx->nvidia_major = nvidia_major;
+	ctx->cgroup_id = vgpu_cgroup_current_id();
 	ctx->last_seen_jiffies = jiffies;
 	ctx->fd_refs++;
 	spin_unlock_irqrestore(&vgpu_tasks_lock, flags);
@@ -177,6 +181,7 @@ void vgpu_task_touch(__s32 pid, __s32 tgid, __s32 gpu_minor,
 	if (ctx) {
 		ctx->pid = pid;
 		ctx->nvidia_major = nvidia_major;
+		ctx->cgroup_id = vgpu_cgroup_current_id();
 		ctx->last_seen_jiffies = jiffies;
 	}
 	spin_unlock_irqrestore(&vgpu_tasks_lock, flags);
@@ -294,6 +299,7 @@ int vgpu_task_memory_charge_object(__s32 pid, __s32 tgid, __s32 gpu_minor,
 	entry->bytes = bytes;
 	ctx->pid = pid;
 	ctx->nvidia_major = nvidia_major;
+	ctx->cgroup_id = vgpu_cgroup_current_id();
 	ctx->memory_used_bytes += bytes;
 	ctx->last_seen_jiffies = jiffies;
 
@@ -350,6 +356,7 @@ int vgpu_task_memory_charge(__s32 pid, __s32 tgid, __s32 gpu_minor,
 
 	ctx->pid = pid;
 	ctx->nvidia_major = nvidia_major;
+	ctx->cgroup_id = vgpu_cgroup_current_id();
 	ctx->memory_used_bytes += bytes;
 	ctx->last_seen_jiffies = jiffies;
 
@@ -446,6 +453,7 @@ int vgpu_task_timeslice_update(__s32 pid, __s32 tgid, __s32 gpu_minor,
 
 	ctx->pid = pid;
 	ctx->nvidia_major = nvidia_major;
+	ctx->cgroup_id = vgpu_cgroup_current_id();
 	ctx->last_timeslice = timeslice;
 	ctx->last_seen_jiffies = jiffies;
 	spin_unlock_irqrestore(&vgpu_tasks_lock, flags);
@@ -480,6 +488,7 @@ int vgpu_task_for_each(int (*fn)(const struct vgpu_task_snapshot *task,
 		snapshots[count].tgid = ctx->tgid;
 		snapshots[count].gpu_minor = ctx->gpu_minor;
 		snapshots[count].nvidia_major = ctx->nvidia_major;
+		snapshots[count].cgroup_id = ctx->cgroup_id;
 		snapshots[count].fd_refs = ctx->fd_refs;
 		snapshots[count].memory_used_bytes = ctx->memory_used_bytes;
 		snapshots[count].last_timeslice = ctx->last_timeslice;

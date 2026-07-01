@@ -35,7 +35,8 @@ static void vgpu_events_test_timeslice_trace_snapshot(struct kunit *test)
 	size_t count;
 
 	vgpu_timeslice_trace_push(VGPU_EVENT_TIMESLICE_WOULD_REWRITE,
-				   100, 100, 255, 2000, 1000, 5000,
+				   100, 100, 255, 2000, 1000, 0, 5000,
+				   VGPU_TIMESLICE_POLICY_SCOPE_TGID,
 				   VGPU_TIMESLICE_REASON_CLAMPED_MIN, 0, 195);
 
 	count = vgpu_timeslice_trace_snapshot(records, ARRAY_SIZE(records));
@@ -48,7 +49,10 @@ static void vgpu_events_test_timeslice_trace_snapshot(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, records[0].gpu_minor, 255);
 	KUNIT_EXPECT_EQ(test, records[0].old_timeslice_us, 2000ULL);
 	KUNIT_EXPECT_EQ(test, records[0].new_timeslice_us, 1000ULL);
+	KUNIT_EXPECT_EQ(test, records[0].cgroup_id, 0ULL);
 	KUNIT_EXPECT_EQ(test, records[0].weight, 5000U);
+	KUNIT_EXPECT_EQ(test, records[0].policy_scope,
+			 VGPU_TIMESLICE_POLICY_SCOPE_TGID);
 	KUNIT_EXPECT_EQ(test, records[0].reason,
 			VGPU_TIMESLICE_REASON_CLAMPED_MIN);
 	KUNIT_EXPECT_EQ(test, records[0].error, 0);

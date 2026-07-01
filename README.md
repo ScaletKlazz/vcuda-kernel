@@ -112,6 +112,12 @@ cat /sys/kernel/debug/vgpu/stats
 # verify compute timeslice enforcement path
 make verify-compute
 
+# verify cgroup identity and policy UAPI path
+make verify-cgroup
+make verify-cgroup-policy
+make verify-cgroup-compute
+make verify-cgroup-memory
+
 # unload module
 make unload
 ```
@@ -185,9 +191,61 @@ make test-kunit
 - ✅ TSG timeslice rewrite enforcement
 - ✅ KUnit test entrypoint
 - ☐ Coverage report publishing
-- ☐ cgroupfs policy control
+- ☐ cgroup policy ownership
 - ☐ Kubernetes device-plugin integration
 - ...
+
+### Cgroup Policy Roadmap
+
+Cgroup policy control uses existing cgroup v2 identity plus `/dev/vgpuctl` policy injection.
+The kernel module will not register a custom Linux cgroup controller. See
+[docs/cgroup-policy-design.md](docs/cgroup-policy-design.md) for the full design and
+[docs/cgroup-policy-flows.md](docs/cgroup-policy-flows.md) for mechanism flowcharts.
+
+#### Cgroup Identity Plumbing
+
+- ✅ Add `core/vgpu_cgroup.c` and `core/vgpu_cgroup.h`
+- ✅ Implement `vgpu_cgroup_current_id()` wrapper
+- ✅ Add `cgroup_id` to task snapshots
+- ✅ Record cgroup id in NVIDIA open/ioctl path
+- ✅ Show `cgroup_id` in `/sys/kernel/debug/vgpu/tasks`
+- ✅ Add cgroup identity validation commands
+
+#### Cgroup Policy UAPI
+
+- ✅ Add `struct vgpu_cgroup_policy`
+- ✅ Add `struct vgpu_cgroup_policy_query`
+- ✅ Add `VGPU_IOCTL_SET_CGROUP_POLICY`
+- ✅ Add `VGPU_IOCTL_GET_CGROUP_POLICY`
+- ✅ Add cgroup policy rhashtable keyed by `(cgroup_id, gpu_minor)`
+- ✅ Add `/sys/kernel/debug/vgpu/cgroup_policies`
+- ✅ Add `examples/vgpu_set_cgroup_policy`
+- ✅ Add KUnit coverage for cgroup policy validation and lookup
+
+#### Cgroup Compute Enforcement
+
+- ✅ Add policy resolver with priority `tgid > cgroup > none`
+- ✅ Use cgroup compute policy in timeslice rewrite path
+- ✅ Extend `/sys/kernel/debug/vgpu/timeslices` with `policy_scope`
+- ✅ Extend `/sys/kernel/debug/vgpu/timeslices` with `cgroup_id`
+- ✅ Add cgroup compute verification script
+
+#### Cgroup Memory Accounting
+
+- ✅ Add cgroup memory stats table
+- ✅ Charge RM allocation objects into cgroup aggregate usage
+- ✅ Free RM allocation objects from cgroup aggregate usage
+- ✅ Apply cgroup memory limit in dry-run first
+- ✅ Add `/sys/kernel/debug/vgpu/cgroups`
+- ✅ Add KUnit coverage for cgroup stats charge/free/overflow
+
+#### Device-Plugin Readiness
+
+- ✅ Keep `../device-plugin` workspace aligned with kernel UAPI
+- ✅ Document device-plugin call sequence
+- ✅ Add `make verify-cgroup`
+- ✅ Add CMake `verify-cgroup` target
+- ✅ Update README usage once cgroup policy path is verified
 
 ### More Features
 
@@ -222,6 +280,8 @@ The submodule is used for ABI/layout lookup and RM ioctl structure references.
 It is not built into `vgpu-kernel.ko`.
 
 # Contributing
+
+[Contributing guide](/CONTRIBUTING.md)
 
 [Code of conduct](/CODE_OF_CONDUCT.md)
 

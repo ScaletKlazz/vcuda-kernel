@@ -145,6 +145,38 @@ add_custom_target(verify-compute
   COMMENT "Verifying compute timeslice tracing and enforcement"
 )
 
+add_custom_target(verify-cgroup
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" verify-cgroup
+  DEPENDS kernel-module
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Verifying cgroup v2 identity tracing"
+)
+
+add_custom_target(verify-cgroup-policy
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" verify-cgroup-policy
+  DEPENDS kernel-module
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Verifying cgroup policy ioctl UAPI"
+)
+
+add_custom_target(verify-cgroup-compute
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" verify-cgroup-compute
+  DEPENDS kernel-module
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Verifying cgroup policy compute timeslice path"
+)
+
+add_custom_target(verify-cgroup-memory
+  COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" verify-cgroup-memory
+  DEPENDS kernel-module
+  WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Verifying cgroup memory accounting path"
+)
+
 add_custom_target(test-kunit
   COMMAND "${MAKE_EXECUTABLE}" -C "${VCUDA_KERNEL_SOURCE_DIR}" test-kunit
   WORKING_DIRECTORY "${VCUDA_KERNEL_SOURCE_DIR}"

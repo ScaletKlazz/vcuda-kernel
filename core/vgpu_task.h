@@ -9,6 +9,7 @@ struct vgpu_task_snapshot {
 	__s32 tgid;
 	__s32 gpu_minor;
 	__u32 nvidia_major;
+	__u64 cgroup_id;
 	__u32 fd_refs;
 	__u64 memory_used_bytes;
 	__u64 last_timeslice;

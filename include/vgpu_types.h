@@ -37,6 +37,24 @@ struct vgpu_policy_query {
 	__u32 reserved;
 };
 
+struct vgpu_cgroup_policy {
+	__u64 cgroup_id;
+	__s32 gpu_minor;
+	__u32 reserved0;
+	__u64 memory_limit_bytes;
+	__u32 compute_weight;
+	__u32 flags;
+};
+
+struct vgpu_cgroup_policy_query {
+	__u64 cgroup_id;
+	__s32 gpu_minor;
+	__u32 reserved0;
+	struct vgpu_cgroup_policy policy;
+	__u32 found;
+	__u32 reserved1;
+};
+
 struct vgpu_stats {
 	__u64 policies_set;
 	__u64 ioctl_seen;

@@ -17,6 +17,10 @@
 #define VGPU_TIMESLICE_REASON_CLAMPED_MIN 7U
 #define VGPU_TIMESLICE_REASON_CLAMPED_MAX 8U
 
+#define VGPU_TIMESLICE_POLICY_SCOPE_NONE 0U
+#define VGPU_TIMESLICE_POLICY_SCOPE_TGID 1U
+#define VGPU_TIMESLICE_POLICY_SCOPE_CGROUP 2U
+
 enum vgpu_event_type {
 	VGPU_EVENT_POLICY_SET = 1,
 	VGPU_EVENT_IOCTL_SEEN,
@@ -55,7 +59,9 @@ struct vgpu_timeslice_record {
 	__s32 gpu_minor;
 	__u64 old_timeslice_us;
 	__u64 new_timeslice_us;
+	__u64 cgroup_id;
 	__u32 weight;
+	__u32 policy_scope;
 	__u32 reason;
 	__s32 error;
 	__u32 flags;
@@ -71,7 +77,8 @@ size_t vgpu_events_snapshot(struct vgpu_event_record *out, size_t max_records);
 void vgpu_timeslice_trace_push(enum vgpu_event_type type, __s32 pid,
 			       __s32 tgid, __s32 gpu_minor,
 			       __u64 old_timeslice_us, __u64 new_timeslice_us,
-			       __u32 weight, __u32 reason, __s32 error,
+			       __u64 cgroup_id, __u32 weight, __u32 policy_scope,
+			       __u32 reason, __s32 error,
 			       __u32 flags);
 size_t vgpu_timeslice_trace_snapshot(struct vgpu_timeslice_record *out,
 				     size_t max_records);

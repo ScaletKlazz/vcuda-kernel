@@ -8,6 +8,7 @@
 #include "vgpu_ioctl.h"
 #include "vgpu_ioctl_arg.h"
 #include "vgpu_ioctl_trace.h"
+#include "vgpu_cgroup_mem.h"
 #include "vgpu_ctl.h"
 #include "vgpu_debugfs.h"
 #include "vgpu_device.h"
@@ -22,6 +23,7 @@
 static bool dry_run = true;
 static bool allow_enforce;
 static struct vgpu_policy_table vgpu_policies;
+static struct vgpu_cgroup_policy_table vgpu_cgroup_policies;
 
 module_param(dry_run, bool, 0444);
 MODULE_PARM_DESC(dry_run, "start in dry-run mode; enabled by default");
@@ -37,35 +39,54 @@ static int __init vgpu_init(void)
 
 	BUILD_BUG_ON(sizeof(struct vgpu_policy) != 24);
 	BUILD_BUG_ON(sizeof(struct vgpu_policy_query) != 40);
+	BUILD_BUG_ON(sizeof(struct vgpu_cgroup_policy) != 32);
+	BUILD_BUG_ON(sizeof(struct vgpu_cgroup_policy_query) != 56);
 	BUILD_BUG_ON(sizeof(struct vgpu_stats) != 112);
 	BUILD_BUG_ON(sizeof(struct vgpu_driver_fingerprint) != 40);
 	vgpu_stats_init(initial_mode);
 	vgpu_events_init();
 	vgpu_ioctl_arg_init();
 	vgpu_ioctl_trace_init();
-
-	ret = vgpu_policy_table_init(&vgpu_policies);
+	ret = vgpu_cgroup_mem_init();
 	if (ret)
 		return ret;
 
-	ret = vgpu_task_registry_init();
+	ret = vgpu_policy_table_init(&vgpu_policies);
+	if (ret) {
+		vgpu_cgroup_mem_exit();
+		return ret;
+	}
+	ret = vgpu_cgroup_policy_table_init(&vgpu_cgroup_policies);
 	if (ret) {
 		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
+		return ret;
+	}
+
+	ret = vgpu_task_registry_init();
+	if (ret) {
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
+		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
 		return ret;
 	}
 
 	ret = vgpu_device_registry_init();
 	if (ret) {
 		vgpu_task_registry_exit();
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
 		return ret;
 	}
 
-	ret = vgpu_ctl_init(&vgpu_policies);
+	ret = vgpu_ctl_init(&vgpu_policies, &vgpu_cgroup_policies);
 	if (ret) {
 		vgpu_device_registry_exit();
 		vgpu_task_registry_exit();
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
 		return ret;
 	}
 
@@ -74,27 +95,33 @@ static int __init vgpu_init(void)
 		vgpu_ctl_exit();
 		vgpu_device_registry_exit();
 		vgpu_task_registry_exit();
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
 		return ret;
 	}
 
-	ret = vgpu_nv_ioctl_init(&vgpu_policies, allow_enforce);
+	ret = vgpu_nv_ioctl_init(&vgpu_policies, &vgpu_cgroup_policies,
+				 allow_enforce);
 	if (ret) {
 		vgpu_nv_probe_exit();
 		vgpu_ctl_exit();
 		vgpu_device_registry_exit();
 		vgpu_task_registry_exit();
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 		vgpu_policy_table_destroy(&vgpu_policies);
+		vgpu_cgroup_mem_exit();
 		return ret;
 	}
 
-	ret = vgpu_debugfs_init(&vgpu_policies);
+	ret = vgpu_debugfs_init(&vgpu_policies, &vgpu_cgroup_policies);
 	if (ret) {
 		vgpu_nv_ioctl_exit();
 		vgpu_nv_probe_exit();
 		vgpu_ctl_exit();
 		vgpu_device_registry_exit();
 		vgpu_task_registry_exit();
+		vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 		vgpu_policy_table_destroy(&vgpu_policies);
 		return ret;
 	}
@@ -113,7 +140,9 @@ static void __exit vgpu_exit(void)
 	vgpu_ctl_exit();
 	vgpu_device_registry_exit();
 	vgpu_task_registry_exit();
+	vgpu_cgroup_policy_table_destroy(&vgpu_cgroup_policies);
 	vgpu_policy_table_destroy(&vgpu_policies);
+	vgpu_cgroup_mem_exit();
 	vgpu_pr_info("module unloaded\n");
 }
 

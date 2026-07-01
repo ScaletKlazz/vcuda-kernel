@@ -13,6 +13,8 @@
 #include <linux/uaccess.h>
 
 #include "vgpu_device.h"
+#include "vgpu_cgroup.h"
+#include "vgpu_cgroup_mem.h"
 #include "vgpu_events.h"
 #include "vgpu_ioctl_arg.h"
 #include "vgpu_ioctl_trace.h"
@@ -56,6 +58,7 @@ static char ioctl_arg_sample_cmds[256];
 static uint ioctl_arg_nested_ptr_offset = UINT_MAX;
 static uint ioctl_arg_nested_sample_bytes = VGPU_IOCTL_ARG_BYTES;
 static struct vgpu_policy_table *vgpu_nv_policies;
+static struct vgpu_cgroup_policy_table *vgpu_nv_cgroup_policies;
 static bool vgpu_nv_allow_enforce;
 
 module_param(nvidia_major, uint, 0444);
@@ -592,6 +595,7 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 	size_t sample_cmd_count;
 	bool known_file;
 	bool would_deny = false;
+	bool cgroup_would_deny = false;
 	__s32 task_tgid;
 	__s32 task_gpu_minor;
 	__u32 task_major;
@@ -609,7 +613,11 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 	__u32 ctrl_params_size = 0;
 	__u64 timeslice_us = 0;
 	__u64 new_timeslice_us = 0;
+	__u64 cgroup_memory_limit = 0;
 	struct vgpu_policy policy;
+	struct vgpu_cgroup_policy cgroup_policy;
+	__u64 task_cgroup_id = 0;
+	__u32 policy_scope = VGPU_TIMESLICE_POLICY_SCOPE_NONE;
 	bool have_compute_policy = false;
 	bool enforce_timeslice = false;
 	__u32 timeslice_reason = VGPU_TIMESLICE_REASON_NONE;
@@ -636,6 +644,7 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 		task_gpu_minor = gpu_minor;
 		task_major = major;
 	}
+	task_cgroup_id = vgpu_cgroup_current_id();
 
 	vgpu_stats_inc(VGPU_STAT_IOCTL_SEEN);
 	vgpu_ioctl_trace_record(cmd, current->pid, task_tgid, task_gpu_minor,
@@ -671,17 +680,36 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 			vgpu_timeslice_trace_push(VGPU_EVENT_TIMESLICE_SEEN,
 						 current->pid, task_tgid,
 						 task_gpu_minor, timeslice_us, 0, 0,
+						 0, VGPU_TIMESLICE_POLICY_SCOPE_NONE,
 						 VGPU_TIMESLICE_REASON_NONE, 0,
 						 task_major);
 
 			policy_ret = vgpu_nv_policies ?
 				vgpu_policy_get(vgpu_nv_policies, task_tgid,
 						 task_gpu_minor, &policy) : -ENOENT;
+			if (!policy_ret) {
+				policy_scope = VGPU_TIMESLICE_POLICY_SCOPE_TGID;
+			} else if (vgpu_nv_cgroup_policies && task_cgroup_id != 0) {
+				policy_ret = vgpu_cgroup_policy_get(vgpu_nv_cgroup_policies,
+								    task_cgroup_id,
+								    task_gpu_minor,
+								    &cgroup_policy);
+				if (!policy_ret) {
+					policy.tgid = task_tgid;
+					policy.gpu_minor = cgroup_policy.gpu_minor;
+					policy.memory_limit_bytes =
+						cgroup_policy.memory_limit_bytes;
+					policy.compute_weight = cgroup_policy.compute_weight;
+					policy.flags = cgroup_policy.flags;
+					policy_scope = VGPU_TIMESLICE_POLICY_SCOPE_CGROUP;
+				}
+			}
 			if (policy_ret) {
 				timeslice_reason = VGPU_TIMESLICE_REASON_NO_POLICY;
 				vgpu_timeslice_trace_push(VGPU_EVENT_TIMESLICE_SEEN,
 							 current->pid, task_tgid,
-							 task_gpu_minor, timeslice_us, 0, 0,
+							 task_gpu_minor, timeslice_us, 0,
+							 task_cgroup_id, 0, policy_scope,
 							 timeslice_reason, policy_ret,
 							 task_major);
 				goto timeslice_trace_done;
@@ -692,7 +720,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 				vgpu_timeslice_trace_push(VGPU_EVENT_TIMESLICE_SEEN,
 							 current->pid, task_tgid,
 							 task_gpu_minor, timeslice_us, 0,
-							 policy.compute_weight,
+							 task_cgroup_id, policy.compute_weight,
+							 policy_scope,
 							 timeslice_reason, 0,
 							 task_major);
 				goto timeslice_trace_done;
@@ -706,7 +735,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 							 current->pid, task_tgid,
 							 task_gpu_minor, timeslice_us,
 							 new_timeslice_us,
-							 policy.compute_weight,
+							 task_cgroup_id, policy.compute_weight,
+							 policy_scope,
 							 VGPU_TIMESLICE_REASON_UNCHANGED,
 							 0, task_major);
 				goto timeslice_trace_done;
@@ -721,7 +751,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 						 current->pid, task_tgid,
 						 task_gpu_minor, timeslice_us,
 						 new_timeslice_us,
-						 policy.compute_weight, timeslice_reason, 0,
+						 task_cgroup_id, policy.compute_weight,
+						 policy_scope, timeslice_reason, 0,
 						 task_major);
 			enforce_timeslice = vgpu_nv_allow_enforce &&
 				vgpu_stats_get_mode() == VGPU_MODE_ENFORCING &&
@@ -734,7 +765,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 							 current->pid, task_tgid,
 							 task_gpu_minor, timeslice_us,
 							 new_timeslice_us,
-							 policy.compute_weight,
+							 task_cgroup_id, policy.compute_weight,
+							 policy_scope,
 							 timeslice_reason, 0,
 							 task_major);
 				goto timeslice_trace_done;
@@ -756,7 +788,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 							 current->pid, task_tgid,
 							 task_gpu_minor, timeslice_us,
 							 new_timeslice_us,
-							 policy.compute_weight, timeslice_reason,
+							 task_cgroup_id, policy.compute_weight,
+							 policy_scope, timeslice_reason,
 							 0,
 							 task_major);
 			} else {
@@ -764,7 +797,8 @@ static int vgpu_nv_ioctl_pre(struct kprobe *p, struct pt_regs *regs)
 							 current->pid, task_tgid,
 							 task_gpu_minor, timeslice_us,
 							 new_timeslice_us,
-							 policy.compute_weight,
+							 task_cgroup_id, policy.compute_weight,
+							 policy_scope,
 							 VGPU_TIMESLICE_REASON_WRITE_FAILED,
 							 write_ret, task_major);
 			}
@@ -774,15 +808,23 @@ timeslice_trace_done:
 	}
 
 	if (memory_free_ioctl_cmd != 0 && cmd == memory_free_ioctl_cmd) {
-		if (vgpu_nv_read_free_object(arg, &free_object))
+		if (vgpu_nv_read_free_object(arg, &free_object)) {
 			ret = vgpu_task_memory_uncharge_object(task_tgid,
 							     task_gpu_minor,
 							     free_object, &bytes);
-		else if (vgpu_nv_read_memory_size(arg, &bytes))
+			if (task_cgroup_id != 0 && ret != -ENOENT)
+				vgpu_cgroup_mem_uncharge_object(task_cgroup_id,
+							      task_gpu_minor,
+							      free_object, NULL);
+		} else if (vgpu_nv_read_memory_size(arg, &bytes)) {
 			ret = vgpu_task_memory_uncharge(task_tgid, task_gpu_minor,
 							bytes);
-		else
+			if (task_cgroup_id != 0 && ret != -ENOENT)
+				vgpu_cgroup_mem_uncharge(task_cgroup_id,
+						       task_gpu_minor, bytes);
+		} else {
 			ret = -EINVAL;
+		}
 		if (ret != -ENOENT)
 			vgpu_stats_inc(VGPU_STAT_MEMORY_FREE_SEEN);
 		if (ret == -ERANGE || ret == -EINVAL)
@@ -808,6 +850,12 @@ timeslice_trace_done:
 	     memory_alloc_class == 0) &&
 	    vgpu_nv_memory_detail_match(have_detail ? &detail : NULL)) {
 		account_bytes = vgpu_nv_memory_size_match(bytes) ? bytes : 0;
+		if (task_cgroup_id != 0 && vgpu_nv_cgroup_policies &&
+		    !vgpu_cgroup_policy_get(vgpu_nv_cgroup_policies,
+					      task_cgroup_id, task_gpu_minor,
+					      &cgroup_policy) &&
+		    (cgroup_policy.flags & VGPU_POLICY_F_MEMORY))
+			cgroup_memory_limit = cgroup_policy.memory_limit_bytes;
 		if (have_detail && detail.object != 0)
 			ret = vgpu_task_memory_charge_object(current->pid, task_tgid,
 							   task_gpu_minor, task_major,
@@ -824,12 +872,30 @@ timeslice_trace_done:
 			return 0;
 		if (account_bytes == 0)
 			return 0;
+		if (task_cgroup_id != 0) {
+			if (have_detail && detail.object != 0)
+				vgpu_cgroup_mem_charge_object(task_cgroup_id,
+							     task_gpu_minor,
+							     detail.object,
+							     account_bytes,
+							     cgroup_memory_limit,
+							     true,
+							     &cgroup_would_deny);
+			else
+				vgpu_cgroup_mem_charge(task_cgroup_id,
+						       task_gpu_minor,
+						       account_bytes,
+						       cgroup_memory_limit,
+						       true,
+						       &cgroup_would_deny);
+		}
 		vgpu_stats_inc(VGPU_STAT_MEMORY_ALLOC_SEEN);
-		if (would_deny) {
+		if (would_deny || cgroup_would_deny) {
 			vgpu_stats_inc(VGPU_STAT_MEMORY_WOULD_DENY);
 			vgpu_events_push(VGPU_EVENT_MEMORY_WOULD_DENY,
 					 current->pid, task_tgid,
 					 task_gpu_minor, account_bytes,
+					 cgroup_memory_limit ? cgroup_memory_limit :
 					 memory_trace_limit_bytes, ret,
 					 task_major);
 		}
@@ -886,11 +952,14 @@ static void vgpu_nv_hook_error(const char *name, int ret)
 	vgpu_pr_warn("nvidia trace hook %s failed ret=%d\n", name, ret);
 }
 
-int vgpu_nv_ioctl_init(struct vgpu_policy_table *policies, bool allow_enforce)
+int vgpu_nv_ioctl_init(struct vgpu_policy_table *policies,
+		       struct vgpu_cgroup_policy_table *cgroup_policies,
+		       bool allow_enforce)
 {
 	int ret;
 
 	vgpu_nv_policies = policies;
+	vgpu_nv_cgroup_policies = cgroup_policies;
 	vgpu_nv_allow_enforce = allow_enforce;
 	memset(&vgpu_nv_ioctl_status, 0, sizeof(vgpu_nv_ioctl_status));
 	vgpu_nv_ioctl_status.nvidia_major = nvidia_major;
@@ -935,6 +1004,7 @@ void vgpu_nv_ioctl_exit(void)
 
 	memset(&vgpu_nv_ioctl_status, 0, sizeof(vgpu_nv_ioctl_status));
 	vgpu_nv_policies = NULL;
+	vgpu_nv_cgroup_policies = NULL;
 	vgpu_nv_allow_enforce = false;
 }
 

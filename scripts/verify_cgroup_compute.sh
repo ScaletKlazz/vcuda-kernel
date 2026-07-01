@@ -1,7 +1,5 @@
 #!/usr/bin/env sh
 # SPDX-License-Identifier: GPL-2.0-only
-# Verify compute timeslice dry-run or enforcement through debugfs evidence.
-
 set -eu
 
 size=${VERIFY_COMPUTE_SIZE:-268435456}
@@ -13,19 +11,13 @@ weight=${VERIFY_COMPUTE_WEIGHT:-5000}
 flags=${VERIFY_COMPUTE_FLAGS:-0x2}
 
 stats=/sys/kernel/debug/vgpu/stats
+tasks=/sys/kernel/debug/vgpu/tasks
 timeslices=/sys/kernel/debug/vgpu/timeslices
 
 fail()
 {
-	printf '\nFAILED: verify-compute: %s\n\n' "$1" >&2
+	printf '\nFAILED: verify-cgroup-compute: %s\n\n' "$1" >&2
 	exit 1
-}
-
-require_file()
-{
-	if [ ! -r "$1" ]; then
-		fail "missing readable file: $1"
-	fi
 }
 
 field_value()
@@ -35,17 +27,20 @@ field_value()
 	tr ' ' '\n' < "$file" | awk -F= -v name="$name" '$1 == name { print $2; exit }'
 }
 
-require_file "$stats"
-require_file "$timeslices"
+./examples/cuda_malloc_smoke $((64 * 1024 * 1024)) 1 "$device" >/dev/null
+cgroup_id=$(sed -n 's/.*cgroup_id=\([0-9][0-9]*\).*/\1/p' "$tasks" | head -n1)
+if [ -z "$cgroup_id" ] || [ "$cgroup_id" = "0" ]; then
+	printf '\n' >&2
+	cat "$tasks" >&2
+	fail "missing non-zero cgroup_id in $tasks"
+fi
 
 before_seen=$(field_value timeslice_seen "$stats")
 before_would=$(field_value timeslice_would_rewrite "$stats")
 before_rewritten=$(field_value timeslice_rewritten "$stats")
 
-./examples/cuda_malloc_smoke "$size" "$loops" "$device" "$sleep_seconds" &
-pid=$!
-./examples/vgpu_set_policy "$pid" "$gpu_minor" "$weight" "$flags"
-wait "$pid"
+./examples/vgpu_set_cgroup_policy "$cgroup_id" "$gpu_minor" "$weight" "$flags" >/dev/null
+./examples/cuda_malloc_smoke "$size" "$loops" "$device" "$sleep_seconds"
 
 after_seen=$(field_value timeslice_seen "$stats")
 after_would=$(field_value timeslice_would_rewrite "$stats")
@@ -59,21 +54,19 @@ if [ "$after_would" -le "$before_would" ]; then
 	fail "timeslice_would_rewrite did not increase: before=$before_would after=$after_would"
 fi
 
-if grep -q 'mode=enforcing' /sys/kernel/debug/vgpu/enabled; then
-	if [ "$after_rewritten" -le "$before_rewritten" ]; then
-		fail "timeslice_rewritten did not increase in enforcing mode: before=$before_rewritten after=$after_rewritten"
-	fi
-	grep -q 'name=TIMESLICE_REWRITTEN' "$timeslices" || {
-		fail "missing TIMESLICE_REWRITTEN in $timeslices"
-	}
-else
-	grep -q 'name=TIMESLICE_WOULD_REWRITE' "$timeslices" || {
-		fail "missing TIMESLICE_WOULD_REWRITE in $timeslices"
-	}
+if ! grep -q 'policy_scope=2' "$timeslices"; then
+	printf '\n' >&2
+	tail -n 20 "$timeslices" >&2
+	fail "missing cgroup policy_scope=2 in $timeslices"
 fi
 
-printf '\nPASS: verify-compute seen=%s->%s would=%s->%s rewritten=%s->%s\n\n' \
-	"$before_seen" "$after_seen" "$before_would" "$after_would" \
+if grep -q 'mode=enforcing' /sys/kernel/debug/vgpu/enabled && \
+   [ "$after_rewritten" -le "$before_rewritten" ]; then
+	fail "timeslice_rewritten did not increase in enforcing mode: before=$before_rewritten after=$after_rewritten"
+fi
+
+printf '\nPASS: verify-cgroup-compute cgroup_id=%s seen=%s->%s would=%s->%s rewritten=%s->%s\n\n' \
+	"$cgroup_id" "$before_seen" "$after_seen" "$before_would" "$after_would" \
 	"$before_rewritten" "$after_rewritten"
 tail -n 10 "$timeslices"
 printf '\n'

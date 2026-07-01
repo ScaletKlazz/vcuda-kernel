@@ -4,7 +4,8 @@
 
 #include "vgpu_policy.h"
 
-int vgpu_debugfs_init(struct vgpu_policy_table *policies);
+int vgpu_debugfs_init(struct vgpu_policy_table *policies,
+		      struct vgpu_cgroup_policy_table *cgroup_policies);
 void vgpu_debugfs_exit(void);
 
 #endif /* VGPU_DEBUGFS_H */

@@ -4,7 +4,8 @@
 
 #include "vgpu_policy.h"
 
-int vgpu_ctl_init(struct vgpu_policy_table *policies);
+int vgpu_ctl_init(struct vgpu_policy_table *policies,
+		  struct vgpu_cgroup_policy_table *cgroup_policies);
 void vgpu_ctl_exit(void);
 
 #endif /* VGPU_CTL_H */

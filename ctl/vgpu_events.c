@@ -155,7 +155,8 @@ size_t vgpu_events_snapshot(struct vgpu_event_record *out, size_t max_records)
 void vgpu_timeslice_trace_push(enum vgpu_event_type type, __s32 pid,
 			       __s32 tgid, __s32 gpu_minor,
 			       __u64 old_timeslice_us, __u64 new_timeslice_us,
-			       __u32 weight, __u32 reason, __s32 error,
+			       __u64 cgroup_id, __u32 weight, __u32 policy_scope,
+			       __u32 reason, __s32 error,
 			       __u32 flags)
 {
 	struct vgpu_timeslice_record *record;
@@ -182,7 +183,9 @@ void vgpu_timeslice_trace_push(enum vgpu_event_type type, __s32 pid,
 	record->gpu_minor = gpu_minor;
 	record->old_timeslice_us = old_timeslice_us;
 	record->new_timeslice_us = new_timeslice_us;
+	record->cgroup_id = cgroup_id;
 	record->weight = weight;
+	record->policy_scope = policy_scope;
 	record->reason = reason;
 	record->error = error;
 	record->flags = flags;

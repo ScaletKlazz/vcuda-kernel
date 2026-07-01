@@ -102,6 +102,86 @@ static void vgpu_policy_test_preserves_dry_run_flag(struct kunit *test)
 	vgpu_policy_table_destroy(&table);
 }
 
+static struct vgpu_cgroup_policy vgpu_cgroup_policy_test_policy(
+	__u64 cgroup_id, __s32 gpu_minor)
+{
+	return (struct vgpu_cgroup_policy) {
+		.cgroup_id = cgroup_id,
+		.gpu_minor = gpu_minor,
+		.memory_limit_bytes = 2 * 1024 * 1024,
+		.compute_weight = 200,
+		.flags = VGPU_POLICY_F_MEMORY | VGPU_POLICY_F_COMPUTE |
+			 VGPU_POLICY_F_DRY_RUN,
+	};
+}
+
+static void vgpu_cgroup_policy_test_insert_and_get(struct kunit *test)
+{
+	struct vgpu_cgroup_policy_table table;
+	struct vgpu_cgroup_policy policy =
+		vgpu_cgroup_policy_test_policy(123456789ULL, 0);
+	struct vgpu_cgroup_policy found = { };
+
+	KUNIT_ASSERT_EQ(test, vgpu_cgroup_policy_table_init(&table), 0);
+	KUNIT_EXPECT_EQ(test, vgpu_cgroup_policy_set(&table, &policy), 0);
+	KUNIT_EXPECT_EQ(test,
+			vgpu_cgroup_policy_get(&table, 123456789ULL, 0, &found),
+			0);
+	KUNIT_EXPECT_EQ(test, found.cgroup_id, policy.cgroup_id);
+	KUNIT_EXPECT_EQ(test, found.gpu_minor, policy.gpu_minor);
+	KUNIT_EXPECT_EQ(test, found.memory_limit_bytes,
+			 policy.memory_limit_bytes);
+	KUNIT_EXPECT_EQ(test, found.compute_weight, policy.compute_weight);
+	KUNIT_EXPECT_EQ(test, found.flags, policy.flags);
+	vgpu_cgroup_policy_table_destroy(&table);
+}
+
+static void vgpu_cgroup_policy_test_replace_existing(struct kunit *test)
+{
+	struct vgpu_cgroup_policy_table table;
+	struct vgpu_cgroup_policy policy =
+		vgpu_cgroup_policy_test_policy(123456789ULL, 0);
+	struct vgpu_cgroup_policy replacement =
+		vgpu_cgroup_policy_test_policy(123456789ULL, 0);
+	struct vgpu_cgroup_policy found = { };
+
+	replacement.memory_limit_bytes = 4 * 1024 * 1024;
+	replacement.compute_weight = 300;
+	replacement.flags = VGPU_POLICY_F_MEMORY | VGPU_POLICY_F_COMPUTE;
+
+	KUNIT_ASSERT_EQ(test, vgpu_cgroup_policy_table_init(&table), 0);
+	KUNIT_EXPECT_EQ(test, vgpu_cgroup_policy_set(&table, &policy), 0);
+	KUNIT_EXPECT_EQ(test, vgpu_cgroup_policy_set(&table, &replacement), 0);
+	KUNIT_EXPECT_EQ(test,
+			vgpu_cgroup_policy_get(&table, 123456789ULL, 0, &found),
+			0);
+	KUNIT_EXPECT_EQ(test, found.memory_limit_bytes,
+			 replacement.memory_limit_bytes);
+	KUNIT_EXPECT_EQ(test, found.compute_weight, replacement.compute_weight);
+	KUNIT_EXPECT_EQ(test, found.flags, replacement.flags);
+	vgpu_cgroup_policy_table_destroy(&table);
+}
+
+static void vgpu_cgroup_policy_test_lookup_miss(struct kunit *test)
+{
+	struct vgpu_cgroup_policy_table table;
+	struct vgpu_cgroup_policy found = { };
+
+	KUNIT_ASSERT_EQ(test, vgpu_cgroup_policy_table_init(&table), 0);
+	KUNIT_EXPECT_EQ(test,
+			vgpu_cgroup_policy_get(&table, 123456789ULL, 0, &found),
+			-ENOENT);
+	vgpu_cgroup_policy_table_destroy(&table);
+}
+
+static void vgpu_cgroup_policy_test_rejects_invalid_id(struct kunit *test)
+{
+	struct vgpu_cgroup_policy policy =
+		vgpu_cgroup_policy_test_policy(0, 0);
+
+	KUNIT_EXPECT_EQ(test, vgpu_cgroup_policy_validate(&policy), -EINVAL);
+}
+
 static struct kunit_case vgpu_policy_test_cases[] = {
 	KUNIT_CASE(vgpu_policy_test_insert_and_get),
 	KUNIT_CASE(vgpu_policy_test_replace_existing),
@@ -109,6 +189,10 @@ static struct kunit_case vgpu_policy_test_cases[] = {
 	KUNIT_CASE(vgpu_policy_test_rejects_invalid_weight),
 	KUNIT_CASE(vgpu_policy_test_rejects_invalid_memory_limit),
 	KUNIT_CASE(vgpu_policy_test_preserves_dry_run_flag),
+	KUNIT_CASE(vgpu_cgroup_policy_test_insert_and_get),
+	KUNIT_CASE(vgpu_cgroup_policy_test_replace_existing),
+	KUNIT_CASE(vgpu_cgroup_policy_test_lookup_miss),
+	KUNIT_CASE(vgpu_cgroup_policy_test_rejects_invalid_id),
 	{}
 };
 

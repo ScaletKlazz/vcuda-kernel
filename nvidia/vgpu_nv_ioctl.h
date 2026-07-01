@@ -42,7 +42,9 @@ struct vgpu_nv_ioctl_status {
 	u64 timeslice_max_us;
 };
 
-int vgpu_nv_ioctl_init(struct vgpu_policy_table *policies, bool allow_enforce);
+int vgpu_nv_ioctl_init(struct vgpu_policy_table *policies,
+		       struct vgpu_cgroup_policy_table *cgroup_policies,
+		       bool allow_enforce);
 void vgpu_nv_ioctl_exit(void);
 void vgpu_nv_ioctl_get_status(struct vgpu_nv_ioctl_status *out);
 

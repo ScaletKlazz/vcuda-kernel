@@ -4,7 +4,8 @@ ifneq ($(KERNELRELEASE),)
 
 obj-m += vgpu-kernel.o
 
-vgpu-kernel-y := core/vgpu_main.o core/vgpu_device.o core/vgpu_ioctl_arg.o
+vgpu-kernel-y := core/vgpu_main.o core/vgpu_cgroup.o core/vgpu_cgroup_mem.o
+vgpu-kernel-y += core/vgpu_device.o core/vgpu_ioctl_arg.o
 vgpu-kernel-y += core/vgpu_ioctl_trace.o
 vgpu-kernel-y += core/vgpu_policy.o
 vgpu-kernel-y += core/vgpu_stats.o core/vgpu_task.o
@@ -12,6 +13,7 @@ vgpu-kernel-y += ctl/vgpu_ctl.o ctl/vgpu_debugfs.o ctl/vgpu_events.o
 vgpu-kernel-y += nvidia/vgpu_nv_ioctl.o nvidia/vgpu_nv_probe.o
 
 vgpu-kernel-$(CONFIG_VGPU_KERNEL_KUNIT_TEST) += tests/kunit/vgpu_policy_test.o
+vgpu-kernel-$(CONFIG_VGPU_KERNEL_KUNIT_TEST) += tests/kunit/vgpu_cgroup_mem_test.o
 vgpu-kernel-$(CONFIG_VGPU_KERNEL_KUNIT_TEST) += tests/kunit/vgpu_ioctl_arg_test.o
 vgpu-kernel-$(CONFIG_VGPU_KERNEL_KUNIT_TEST) += tests/kunit/vgpu_ioctl_trace_test.o
 vgpu-kernel-$(CONFIG_VGPU_KERNEL_KUNIT_TEST) += tests/kunit/vgpu_events_test.o
@@ -85,7 +87,7 @@ TIMESLICE_US_OFFSET ?=
 TIMESLICE_MIN_US ?= 0
 TIMESLICE_MAX_US ?= 0
 
-.PHONY: modules clean load unload reload fingerprint example example-clean verify-compute test-kunit
+.PHONY: modules clean load unload reload fingerprint example example-clean verify-cgroup verify-cgroup-policy verify-cgroup-compute verify-cgroup-memory verify-compute test-kunit
 
 modules:
 	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(CURDIR) modules
@@ -98,6 +100,22 @@ example:
 
 example-clean:
 	$(MAKE) -C examples clean
+
+verify-cgroup: example
+	$(MAKE) reload CLEAR_MEMORY_ON_LAST_CLOSE=0
+	sh scripts/verify_cgroup.sh
+
+verify-cgroup-policy: example
+	$(MAKE) reload CLEAR_MEMORY_ON_LAST_CLOSE=0
+	sh scripts/verify_cgroup_policy.sh
+
+verify-cgroup-compute: example
+	$(MAKE) reload CLEAR_MEMORY_ON_LAST_CLOSE=0
+	sh scripts/verify_cgroup_compute.sh
+
+verify-cgroup-memory: example
+	$(MAKE) reload CLEAR_MEMORY_ON_LAST_CLOSE=0
+	sh scripts/verify_cgroup_memory.sh
 
 # Runs a repeatable compute timeslice validation. Defaults enforce a 50% policy
 # and verify stats plus /sys/kernel/debug/vgpu/timeslices evidence.

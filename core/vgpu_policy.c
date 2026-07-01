@@ -18,9 +18,24 @@ static const struct rhashtable_params vgpu_policy_rhashtable_params = {
 	.automatic_shrinking = true,
 };
 
+static const struct rhashtable_params vgpu_cgroup_policy_rhashtable_params = {
+	.key_len = sizeof(struct vgpu_cgroup_policy_key),
+	.key_offset = offsetof(struct vgpu_cgroup_policy_entry, key),
+	.head_offset = offsetof(struct vgpu_cgroup_policy_entry, node),
+	.automatic_shrinking = true,
+};
+
 static void vgpu_policy_entry_free(void *ptr, void *arg)
 {
 	struct vgpu_policy_entry *entry = ptr;
+
+	(void)arg;
+	kfree(entry);
+}
+
+static void vgpu_cgroup_policy_entry_free(void *ptr, void *arg)
+{
+	struct vgpu_cgroup_policy_entry *entry = ptr;
 
 	(void)arg;
 	kfree(entry);
@@ -147,6 +162,161 @@ int vgpu_policy_for_each(struct vgpu_policy_table *policies,
 {
 	struct rhashtable_iter iter;
 	struct vgpu_policy_entry *entry;
+	int ret = 0;
+
+	if (!policies || !fn)
+		return -EINVAL;
+
+	mutex_lock(&policies->lock);
+	rhashtable_walk_enter(&policies->table, &iter);
+	rhashtable_walk_start(&iter);
+
+	while ((entry = rhashtable_walk_next(&iter)) != NULL) {
+		if (IS_ERR(entry)) {
+			ret = PTR_ERR(entry);
+			if (ret == -EAGAIN) {
+				ret = 0;
+				continue;
+			}
+			break;
+		}
+
+		ret = fn(&entry->policy, data);
+		if (ret)
+			break;
+	}
+
+	rhashtable_walk_stop(&iter);
+	rhashtable_walk_exit(&iter);
+	mutex_unlock(&policies->lock);
+
+	return ret;
+}
+
+int vgpu_cgroup_policy_table_init(struct vgpu_cgroup_policy_table *policies)
+{
+	int ret;
+
+	if (!policies)
+		return -EINVAL;
+
+	mutex_init(&policies->lock);
+	ret = rhashtable_init(&policies->table,
+			       &vgpu_cgroup_policy_rhashtable_params);
+	if (ret)
+		mutex_destroy(&policies->lock);
+
+	return ret;
+}
+
+void vgpu_cgroup_policy_table_destroy(struct vgpu_cgroup_policy_table *policies)
+{
+	if (!policies)
+		return;
+
+	rhashtable_free_and_destroy(&policies->table,
+				     vgpu_cgroup_policy_entry_free, NULL);
+	mutex_destroy(&policies->lock);
+}
+
+int vgpu_cgroup_policy_validate(const struct vgpu_cgroup_policy *policy)
+{
+	if (!policy)
+		return -EINVAL;
+	if (policy->cgroup_id == 0)
+		return -EINVAL;
+	if (policy->gpu_minor < 0)
+		return -EINVAL;
+	if (policy->flags & ~VGPU_POLICY_VALID_FLAGS)
+		return -EINVAL;
+	if (policy->compute_weight < 1 || policy->compute_weight > 10000)
+		return -EINVAL;
+	if ((policy->flags & VGPU_POLICY_F_MEMORY) &&
+	    policy->memory_limit_bytes == 0)
+		return -EINVAL;
+
+	return 0;
+}
+
+int vgpu_cgroup_policy_set(struct vgpu_cgroup_policy_table *policies,
+				   const struct vgpu_cgroup_policy *policy)
+{
+	struct vgpu_cgroup_policy_entry *entry;
+	struct vgpu_cgroup_policy_key key;
+	int ret;
+
+	if (!policies)
+		return -EINVAL;
+
+	ret = vgpu_cgroup_policy_validate(policy);
+	if (ret)
+		return ret;
+
+	key.cgroup_id = policy->cgroup_id;
+	key.gpu_minor = policy->gpu_minor;
+	key.reserved = 0;
+
+	mutex_lock(&policies->lock);
+	entry = rhashtable_lookup_fast(&policies->table, &key,
+				       vgpu_cgroup_policy_rhashtable_params);
+	if (entry) {
+		entry->policy = *policy;
+		mutex_unlock(&policies->lock);
+		return 0;
+	}
+
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	if (!entry) {
+		mutex_unlock(&policies->lock);
+		return -ENOMEM;
+	}
+
+	entry->key = key;
+	entry->policy = *policy;
+	ret = rhashtable_insert_fast(&policies->table, &entry->node,
+				      vgpu_cgroup_policy_rhashtable_params);
+	if (ret)
+		kfree(entry);
+	mutex_unlock(&policies->lock);
+
+	return ret;
+}
+
+int vgpu_cgroup_policy_get(struct vgpu_cgroup_policy_table *policies,
+				   __u64 cgroup_id, __s32 gpu_minor,
+				   struct vgpu_cgroup_policy *policy)
+{
+	struct vgpu_cgroup_policy_entry *entry;
+	struct vgpu_cgroup_policy_key key = {
+		.cgroup_id = cgroup_id,
+		.gpu_minor = gpu_minor,
+	};
+
+	if (!policies || !policy)
+		return -EINVAL;
+	if (cgroup_id == 0 || gpu_minor < 0)
+		return -EINVAL;
+
+	mutex_lock(&policies->lock);
+	entry = rhashtable_lookup_fast(&policies->table, &key,
+				       vgpu_cgroup_policy_rhashtable_params);
+	if (!entry) {
+		mutex_unlock(&policies->lock);
+		return -ENOENT;
+	}
+
+	*policy = entry->policy;
+	mutex_unlock(&policies->lock);
+	return 0;
+}
+
+int vgpu_cgroup_policy_for_each(struct vgpu_cgroup_policy_table *policies,
+					int (*fn)(const struct vgpu_cgroup_policy *policy,
+						  void *data),
+					void *data)
+{
+	struct rhashtable_iter iter;
+	struct vgpu_cgroup_policy_entry *entry;
 	int ret = 0;
 
 	if (!policies || !fn)

@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 
 #include "vgpu_debugfs.h"
+#include "vgpu_cgroup_mem.h"
 #include "vgpu_events.h"
 #include "vgpu_ioctl_arg.h"
 #include "vgpu_ioctl_trace.h"
@@ -19,6 +20,7 @@
 
 static struct dentry *vgpu_debugfs_root;
 static struct vgpu_policy_table *vgpu_debugfs_policies;
+static struct vgpu_cgroup_policy_table *vgpu_debugfs_cgroup_policies;
 static const char *vgpu_debugfs_mode_name(enum vgpu_runtime_mode mode)
 {
 	switch (mode) {
@@ -131,14 +133,45 @@ static int vgpu_debugfs_policies_show(struct seq_file *seq, void *data)
 	return ret;
 }
 
+static int vgpu_debugfs_cgroup_policy_print(
+	const struct vgpu_cgroup_policy *policy, void *data)
+{
+	struct seq_file *seq = data;
+
+	seq_printf(seq,
+		   "cgroup_id=%llu gpu_minor=%d memory_limit_bytes=%llu compute_weight=%u flags=%u memory=%u compute=%u dry_run=%u\n",
+		   (unsigned long long)policy->cgroup_id, policy->gpu_minor,
+		   (unsigned long long)policy->memory_limit_bytes,
+		   policy->compute_weight, policy->flags,
+		   !!(policy->flags & VGPU_POLICY_F_MEMORY),
+		   !!(policy->flags & VGPU_POLICY_F_COMPUTE),
+		   !!(policy->flags & VGPU_POLICY_F_DRY_RUN));
+	return 0;
+}
+
+static int vgpu_debugfs_cgroup_policies_show(struct seq_file *seq, void *data)
+{
+	int ret;
+
+	(void)data;
+	if (!vgpu_debugfs_cgroup_policies)
+		return -ENODEV;
+
+	ret = vgpu_cgroup_policy_for_each(vgpu_debugfs_cgroup_policies,
+					    vgpu_debugfs_cgroup_policy_print,
+					    seq);
+	return ret;
+}
+
 static int vgpu_debugfs_task_print(const struct vgpu_task_snapshot *task,
 				   void *data)
 {
 	struct seq_file *seq = data;
 
 	seq_printf(seq,
-		   "pid=%d tgid=%d gpu_minor=%d nvidia_major=%u fd_refs=%u memory_used_bytes=%llu last_timeslice=%llu last_seen_jiffies=%llu\n",
+		   "pid=%d tgid=%d gpu_minor=%d nvidia_major=%u cgroup_id=%llu fd_refs=%u memory_used_bytes=%llu last_timeslice=%llu last_seen_jiffies=%llu\n",
 		   task->pid, task->tgid, task->gpu_minor, task->nvidia_major,
+		   (unsigned long long)task->cgroup_id,
 		   task->fd_refs,
 		   (unsigned long long)task->memory_used_bytes,
 		   (unsigned long long)task->last_timeslice,
@@ -153,6 +186,28 @@ static int vgpu_debugfs_tasks_show(struct seq_file *seq, void *data)
 	(void)data;
 	ret = vgpu_task_for_each(vgpu_debugfs_task_print, seq);
 	return ret;
+}
+
+static int vgpu_debugfs_cgroup_print(
+	const struct vgpu_cgroup_mem_snapshot *snapshot, void *data)
+{
+	struct seq_file *seq = data;
+
+	seq_printf(seq,
+		   "cgroup_id=%llu gpu_minor=%d memory_used_bytes=%llu alloc_seen=%llu free_seen=%llu would_deny=%llu denied=%llu\n",
+		   (unsigned long long)snapshot->cgroup_id, snapshot->gpu_minor,
+		   (unsigned long long)snapshot->memory_used_bytes,
+		   (unsigned long long)snapshot->alloc_seen,
+		   (unsigned long long)snapshot->free_seen,
+		   (unsigned long long)snapshot->would_deny,
+		   (unsigned long long)snapshot->denied);
+	return 0;
+}
+
+static int vgpu_debugfs_cgroups_show(struct seq_file *seq, void *data)
+{
+	(void)data;
+	return vgpu_cgroup_mem_for_each(vgpu_debugfs_cgroup_print, seq);
 }
 
 static int vgpu_debugfs_events_show(struct seq_file *seq, void *data)
@@ -200,13 +255,15 @@ static int vgpu_debugfs_timeslices_show(struct seq_file *seq, void *data)
 	count = vgpu_timeslice_trace_snapshot(records, VGPU_TIMESLICE_TRACE_SIZE);
 	for (i = 0; i < count; i++) {
 		seq_printf(seq,
-			   "seq=%llu ts_ns=%llu type=%u name=%s pid=%d tgid=%d gpu_minor=%d old_timeslice_us=%llu new_timeslice_us=%llu weight=%u reason=%u reason_name=%s error=%d flags=%u\n",
+			   "seq=%llu ts_ns=%llu type=%u name=%s pid=%d tgid=%d gpu_minor=%d cgroup_id=%llu policy_scope=%u old_timeslice_us=%llu new_timeslice_us=%llu weight=%u reason=%u reason_name=%s error=%d flags=%u\n",
 			   (unsigned long long)records[i].seq,
 			   (unsigned long long)records[i].ts_ns,
 			   records[i].type,
 			   vgpu_event_type_name(records[i].type),
 			   records[i].pid, records[i].tgid,
 			   records[i].gpu_minor,
+			   (unsigned long long)records[i].cgroup_id,
+			   records[i].policy_scope,
 			   (unsigned long long)records[i].old_timeslice_us,
 			   (unsigned long long)records[i].new_timeslice_us,
 			   records[i].weight, records[i].reason,
@@ -444,7 +501,9 @@ VGPU_DEBUGFS_FOPS(vgpu_debugfs_enabled);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_driver_fingerprint);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_hooks);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_policies);
+VGPU_DEBUGFS_FOPS(vgpu_debugfs_cgroup_policies);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_tasks);
+VGPU_DEBUGFS_FOPS(vgpu_debugfs_cgroups);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_events);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_timeslices);
 VGPU_DEBUGFS_FOPS(vgpu_debugfs_ioctls);
@@ -469,21 +528,25 @@ static int vgpu_debugfs_create_file(const char *name,
 	return 0;
 }
 
-int vgpu_debugfs_init(struct vgpu_policy_table *policies)
+int vgpu_debugfs_init(struct vgpu_policy_table *policies,
+		      struct vgpu_cgroup_policy_table *cgroup_policies)
 {
 	int ret;
 
-	if (!policies)
+	if (!policies || !cgroup_policies)
 		return -EINVAL;
 
 	vgpu_debugfs_policies = policies;
+	vgpu_debugfs_cgroup_policies = cgroup_policies;
 	vgpu_debugfs_root = debugfs_create_dir("vgpu", NULL);
 	if (IS_ERR(vgpu_debugfs_root)) {
 		vgpu_debugfs_policies = NULL;
+		vgpu_debugfs_cgroup_policies = NULL;
 		return PTR_ERR(vgpu_debugfs_root);
 	}
 	if (!vgpu_debugfs_root) {
 		vgpu_debugfs_policies = NULL;
+		vgpu_debugfs_cgroup_policies = NULL;
 		return -ENOMEM;
 	}
 
@@ -500,7 +563,14 @@ int vgpu_debugfs_init(struct vgpu_policy_table *policies)
 	ret = vgpu_debugfs_create_file("policies", &vgpu_debugfs_policies_fops);
 	if (ret)
 		goto err_remove;
+	ret = vgpu_debugfs_create_file("cgroup_policies",
+				       &vgpu_debugfs_cgroup_policies_fops);
+	if (ret)
+		goto err_remove;
 	ret = vgpu_debugfs_create_file("tasks", &vgpu_debugfs_tasks_fops);
+	if (ret)
+		goto err_remove;
+	ret = vgpu_debugfs_create_file("cgroups", &vgpu_debugfs_cgroups_fops);
 	if (ret)
 		goto err_remove;
 	ret = vgpu_debugfs_create_file("events", &vgpu_debugfs_events_fops);
@@ -543,6 +613,7 @@ err_remove:
 	debugfs_remove_recursive(vgpu_debugfs_root);
 	vgpu_debugfs_root = NULL;
 	vgpu_debugfs_policies = NULL;
+	vgpu_debugfs_cgroup_policies = NULL;
 	return ret;
 }
 
@@ -551,4 +622,5 @@ void vgpu_debugfs_exit(void)
 	debugfs_remove_recursive(vgpu_debugfs_root);
 	vgpu_debugfs_root = NULL;
 	vgpu_debugfs_policies = NULL;
+	vgpu_debugfs_cgroup_policies = NULL;
 }
